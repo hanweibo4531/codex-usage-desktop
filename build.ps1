@@ -1,0 +1,10 @@
+$ErrorActionPreference = 'Stop'
+$framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
+$refs = @('System.dll','System.Core.dll','System.Web.Extensions.dll','System.Xaml.dll','System.Drawing.dll','System.Windows.Forms.dll','WPF\WindowsBase.dll','WPF\PresentationCore.dll','WPF\PresentationFramework.dll') | ForEach-Object { '/reference:' + (Join-Path $framework $_) }
+New-Item -ItemType Directory -Path "$PSScriptRoot/dist" -Force | Out-Null
+$compilerArgs = @('/nologo', '/target:winexe', '/platform:anycpu', '/optimize+', '/utf8output', ('/win32manifest:' + "$PSScriptRoot\app.manifest"), ('/out:' + "$PSScriptRoot\dist\CodexUsage.exe"), ('/resource:' + "$PSScriptRoot\Main.xaml,Main.xaml")) + $refs + @("$PSScriptRoot\App.cs")
+& "$framework/csc.exe" @compilerArgs
+if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+Copy-Item -LiteralPath "$PSScriptRoot/README.md" -Destination "$PSScriptRoot/dist/README.md" -Force
+Copy-Item -LiteralPath "$PSScriptRoot/LICENSE" -Destination "$PSScriptRoot/dist/LICENSE" -Force
+Write-Output "Built: $PSScriptRoot/dist/CodexUsage.exe"

@@ -1,0 +1,27 @@
+# Local builds, exports and diagnostics
+dist/
+artifacts/
+*.zip
+*.csv
+diagnostics.json
+self-test.txt
+settings.json
+*.log
+
+# IDE / OS files
+.vs/
+.vscode/
+bin/
+obj/
+*.user
+*.suo
+Thumbs.db
+.DS_Store
+
+# Never commit credentials or session data
+.env
+.env.*
+auth.json
+.codex/
+sessions/
+archived_sessions/

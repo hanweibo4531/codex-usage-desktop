@@ -1,0 +1,31 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native desktop app
+        shell: powershell
+        run: .\build.ps1
+      - name: Run parser regression checks
+        shell: powershell
+        run: |
+          $check = Start-Process -FilePath .\dist\CodexUsage.exe -ArgumentList --self-test -Wait -PassThru
+          Get-Content .\dist\self-test.txt
+          if ($check.ExitCode -ne 0) { throw 'Regression checks failed' }
+      - name: Package portable application
+        shell: powershell
+        run: Compress-Archive -Path dist\CodexUsage.exe,README.md,LICENSE -DestinationPath CodexUsage-Windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexUsage-Windows
+          path: CodexUsage-Windows.zip
