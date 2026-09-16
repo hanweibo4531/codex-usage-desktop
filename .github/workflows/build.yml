@@ -24,7 +24,7 @@ jobs:
           if ($check.ExitCode -ne 0) { throw 'Regression checks failed' }
       - name: Package portable application
         shell: powershell
-        run: Compress-Archive -Path dist\CodexUsage.exe,README.md,LICENSE -DestinationPath CodexUsage-Windows.zip
+        run: Compress-Archive -Path dist\CodexUsage.exe,README.md,LICENSE,assets -DestinationPath CodexUsage-Windows.zip
       - uses: actions/upload-artifact@v4
         with:
           name: CodexUsage-Windows

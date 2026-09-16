@@ -6,6 +6,7 @@ artifacts/
 diagnostics.json
 self-test.txt
 settings.json
+pending-reset.json
 *.log
 
 # IDE / OS files

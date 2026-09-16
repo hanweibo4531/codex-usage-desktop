@@ -14,8 +14,14 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
+
+[assembly: AssemblyTitle("Codex Usage Desktop")]
+[assembly: AssemblyDescription("Codex quota and token usage monitor")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
 
 namespace CodexUsage {
 static class Json {
@@ -94,15 +100,15 @@ class LogReader {
  }
 }
 class Settings {
- public string CodexHome; public string Executable; public bool AutoRefresh=true;
+ public string CodexHome; public string Executable; public bool AutoRefresh=true; public string Theme="dark";
  public static string FileName=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"CodexUsage","settings.json");
  public static Settings Load() {
   var s=new Settings {CodexHome=Environment.GetEnvironmentVariable("CODEX_HOME")};
   if(string.IsNullOrEmpty(s.CodexHome))s.CodexHome=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),".codex");
-  try { var j=Json.Read(File.ReadAllText(FileName)); if(Json.S(j,"home")!="")s.CodexHome=Json.S(j,"home");s.Executable=Json.S(j,"exe");s.AutoRefresh=Json.Get(j,"auto") as bool? ?? true; }catch{}
+  try { var j=Json.Read(File.ReadAllText(FileName)); if(Json.S(j,"home")!="")s.CodexHome=Json.S(j,"home");s.Executable=Json.S(j,"exe");s.AutoRefresh=Json.Get(j,"auto") as bool? ?? true;s.Theme=Json.S(j,"theme")=="light"?"light":"dark"; }catch{}
   return s;
  }
- public void Save() { Directory.CreateDirectory(Path.GetDirectoryName(FileName));File.WriteAllText(FileName,Json.Write(new{home=CodexHome,exe=Executable,auto=AutoRefresh}),Encoding.UTF8); }
+ public void Save() { Directory.CreateDirectory(Path.GetDirectoryName(FileName));File.WriteAllText(FileName,Json.Write(new{home=CodexHome,exe=Executable,auto=AutoRefresh,theme=Theme}),Encoding.UTF8); }
 }
 class AccountResult { public object Quotas; public DateTime Time; public string Error; }
 class AccountClient : IDisposable {
@@ -137,20 +143,24 @@ class AccountClient : IDisposable {
     process.ErrorDataReceived+=(s,e)=>{};
     process.Exited+=(s,e)=>{lock(gate){foreach(var t in pending.Values)t.TrySetException(new IOException("Codex 服务已退出"));}};
     process.Start();process.BeginOutputReadLine();process.BeginErrorReadLine();
-    await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.1.0"}});
+    await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.2.0"}});
     process.StandardInput.WriteLine("{\"method\":\"initialized\"}");process.StandardInput.Flush();
    }
    var result=await Call("account/rateLimits/read",null);
    return new AccountResult{Quotas=result,Time=DateTime.Now};
   } catch(Exception ex) {Dispose();return new AccountResult{Error=ex is TimeoutException?"实时额度读取超时": "实时额度未连接，请确认 Codex 登录与网络"};}
  }
+ public Task<object> ConsumeReset(string key) {
+  return Call("account/rateLimitResetCredit/consume",new{idempotencyKey=key});
+ }
  public void Dispose() { var p=process;process=null;if(p!=null){try {if(!p.HasExited){p.StandardInput.Close();if(!p.WaitForExit(700))p.Kill();}}catch{}p.Dispose();} }
 }
 class App {
  Window window; Settings settings; AccountClient account=new AccountClient(); LogReader logs=new LogReader(); Snapshot snapshot=new Snapshot(); AccountResult live=new AccountResult();
- DispatcherTimer timer; Forms.NotifyIcon tray; bool busy,updatingFilter; int days=1;
+ DispatcherTimer timer; Forms.NotifyIcon tray; bool busy,updatingFilter,resetting; int days=1;
+ ResetCoordinator reset; string resetStorageError;
  T C<T>(string name) where T:FrameworkElement {return (T)window.FindName(name);}
- static SolidColorBrush Brush(string color) {return (SolidColorBrush)new BrushConverter().ConvertFromString(color);}
+ static SolidColorBrush Brush(string color) {return (SolidColorBrush)new BrushConverter().ConvertFromString(Theme.Resolve(color));}
  static TextBlock Text(string value,double size,string color) {return new TextBlock{Text=value,FontSize=size,Foreground=Brush(color),VerticalAlignment=VerticalAlignment.Center};}
  static string Number(long n) {return n>=100000000?(n/100000000.0).ToString("0.0")+" 亿":n>=10000?(n/10000.0).ToString("0.0")+" 万":n.ToString("N0");}
  [STAThread] public static void Main(string[] args) {
@@ -164,11 +174,20 @@ class App {
  }
  void Start() {
   settings=Settings.Load(); using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("Main.xaml"))window=(Window)XamlReader.Load(stream);
+  Theme.Apply(window,settings.Theme);
+  using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("app.png")) {
+   var bitmap=new BitmapImage();bitmap.BeginInit();bitmap.CacheOption=BitmapCacheOption.OnLoad;bitmap.StreamSource=stream;bitmap.EndInit();bitmap.Freeze();
+   window.Icon=bitmap;C<Image>("AppLogo").Source=bitmap;
+  }
+  try {var store=new ResetStore(Path.Combine(Path.GetDirectoryName(Settings.FileName),"pending-reset.json"));reset=new ResetCoordinator(store.Load(),store.Save);}
+  catch {resetStorageError="无法读取未完成的重置记录。为避免重复消耗，请保留 pending-reset.json 并检查文件权限。";}
   window.MaxHeight=SystemParameters.WorkArea.Height;window.Height=Math.Min(830,SystemParameters.WorkArea.Height-30);
   C<Grid>("TitleBar").MouseLeftButtonDown+=(s,e)=>{if(e.OriginalSource is TextBlock||e.OriginalSource==s)try{window.DragMove();}catch{}};
   C<Button>("CloseButton").Click+=(s,e)=>window.Close();C<Button>("HideButton").Click+=(s,e)=>window.Hide();
   C<Button>("PinButton").Click+=(s,e)=>{window.Topmost=!window.Topmost;C<Button>("PinButton").Content=window.Topmost?"已置顶":"置顶";};
   C<Button>("RefreshButton").Click+=async(s,e)=>await Refresh();
+  C<Button>("ResetButton").Click+=async(s,e)=>await ResetQuota();
+  C<Button>("ThemeButton").Click+=(s,e)=>ToggleTheme();UpdateThemeButton();
   C<Button>("TodayButton").Click+=(s,e)=>{days=1;RenderLocal();};C<Button>("WeekButton").Click+=(s,e)=>{days=7;RenderLocal();};
   C<ComboBox>("ModelFilter").SelectionChanged+=(s,e)=>{if(!updatingFilter)RenderLocal();};
   C<Button>("ExportButton").Click+=(s,e)=>Export();C<Button>("SettingsButton").Click+=(s,e)=>ShowSettings();
@@ -179,17 +198,12 @@ class App {
   window.Loaded+=async(s,e)=>await Refresh();RenderQuotas();
  }
  static System.Drawing.Icon MakeIcon() {
-  using(var bitmap=new System.Drawing.Bitmap(32,32))using(var g=System.Drawing.Graphics.FromImage(bitmap)){
-   g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;g.Clear(System.Drawing.Color.Transparent);
-   using(var b=new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(75,201,255)))g.FillEllipse(b,1,1,30,30);
-   using(var p=new System.Drawing.Pen(System.Drawing.Color.FromArgb(8,13,22),3)){g.DrawLines(p,new[]{new System.Drawing.Point(13,10),new System.Drawing.Point(7,16),new System.Drawing.Point(13,22)});g.DrawLines(p,new[]{new System.Drawing.Point(19,10),new System.Drawing.Point(25,16),new System.Drawing.Point(19,22)});}
-   var handle=bitmap.GetHicon();try{return (System.Drawing.Icon)System.Drawing.Icon.FromHandle(handle).Clone();}finally{DestroyIcon(handle);}
-  }
+  using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("app.ico"))
+  using(var icon=new System.Drawing.Icon(stream,32,32))return (System.Drawing.Icon)icon.Clone();
  }
- [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr hIcon);
  void ShowWindow() {window.Show();window.WindowState=WindowState.Normal;window.Activate();}
  async Task Refresh() {
-  if(busy)return;busy=true;C<Button>("RefreshButton").IsEnabled=false;C<Button>("RefreshButton").Content="同步中…";
+  if(busy||resetting)return;busy=true;UpdateResetButton();C<Button>("RefreshButton").IsEnabled=false;C<Button>("RefreshButton").Content="同步中…";
   try {
    var fetch=account.Read(settings);
    snapshot=await Task.Run(()=>logs.Read(settings.CodexHome,DateTime.Today.AddDays(-6)));
@@ -198,7 +212,7 @@ class App {
    live=await fetch;
    if(window.IsLoaded)RenderQuotas();
   }catch{if(window.IsLoaded)C<TextBlock>("StatusText").Text="读取失败，请检查数据目录";}
-  finally{busy=false;if(window.IsLoaded){C<Button>("RefreshButton").IsEnabled=true;C<Button>("RefreshButton").Content="↻  刷新";}}
+  finally{busy=false;if(window.IsLoaded){C<Button>("RefreshButton").IsEnabled=true;C<Button>("RefreshButton").Content="↻  刷新";UpdateResetButton();}}
  }
  void UpdateModels() {
   updatingFilter=true;var combo=C<ComboBox>("ModelFilter");string selected=combo.SelectedItem as string;
@@ -227,6 +241,7 @@ class App {
   C<TextBlock>("ChartTitle").Text=days==1?"今日用量分布":"近 7 天用量分布";C<TextBlock>("ChartStart").Text=days==1?"00:00":DateTime.Today.AddDays(-6).ToString("MM/dd");C<TextBlock>("ChartEnd").Text=days==1?"23:00":DateTime.Today.ToString("MM/dd");
  }
  void RenderQuotas() {
+  double scrollOffset=C<ScrollViewer>("UsageScroll").VerticalOffset;
   var panel=C<StackPanel>("QuotaCards");panel.Children.Clear();bool real=live.Quotas!=null;
   var quotas=real?Json.D(Json.Get(live.Quotas,"rateLimitsByLimitId")):new Dictionary<string,object>();
   if(quotas.Count==0) {object q=real?Json.Get(live.Quotas,"rateLimits"):snapshot.Quota;if(q!=null)quotas["codex"]=q;}
@@ -242,6 +257,68 @@ class App {
   if(quotas.Count==0) {var s=new StackPanel();s.Children.Add(Text("Codex",14,"#EDF5FF"));s.Children.Add(new TextBlock{Text=busy?"正在读取账户额度…":"暂无额度数据\n请确认 Codex 已登录，再点击刷新。",TextWrapping=TextWrapping.Wrap,Foreground=Brush("#90A5C0"),Margin=new Thickness(0,10,0,0)});panel.Children.Add(new Border{Style=(Style)window.FindResource("Card"),Child=s});}
   C<TextBlock>("StatusText").Text=real?"●  已连接 · "+(settings.AutoRefresh?"每 60 秒刷新":"自动刷新已暂停"):"●  "+(snapshot.Quota!=null?"本机快照 · 实时额度未连接":"等待额度连接");
   C<TextBlock>("StatusText").Foreground=Brush(real?"#4BC9FF":"#FFC178");C<TextBlock>("StatusText").ToolTip=live.Error??"账户额度来自 Codex";
+  UpdateResetButton();
+  C<ScrollViewer>("UsageScroll").UpdateLayout();C<ScrollViewer>("UsageScroll").ScrollToVerticalOffset(scrollOffset);
+ }
+ void UpdateThemeButton() {
+  C<Button>("ThemeButton").Content=Theme.IsLight?"深色":"浅色";
+  C<Button>("ThemeButton").ToolTip=Theme.IsLight?"切换为深色主题":"切换为浅色主题";
+ }
+ void ToggleTheme() {
+  settings.Theme=Theme.IsLight?"dark":"light";Theme.Apply(window,settings.Theme);
+  UpdateThemeButton();RenderLocal();RenderQuotas();
+  try {settings.Save();}catch{MessageBox.Show(window,"主题已切换，但设置暂时无法保存。请检查本地文件权限。","保存设置失败");}
+ }
+ void UpdateResetButton() {
+  var button=C<Button>("ResetButton");
+  string reason=resetStorageError??(reset==null?"重置尚未就绪":reset.UnavailableReason(live,settings.CodexHome));
+  button.Content=resetting?"处理中…":reset!=null&&reset.Pending!=null?"重试重置":"重置额度";
+  button.IsEnabled=!busy&&!resetting&&reason==null;
+  button.ToolTip=reason??(reset.Pending!=null?"重试上一次结果未确认的重置":"消耗 1 次可用重置；点击后需要确认");
+ }
+ internal static Window BuildResetDialog(Window owner,bool retry) {
+  var dialog=new Window{Title=retry?"重试额度重置":"确认重置额度",Width=410,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,WindowStartupLocation=WindowStartupLocation.CenterOwner,Background=Brush("#111B2B"),Foreground=Brush("#EAF2FF"),FontFamily=owner.FontFamily,ShowInTaskbar=false,Icon=owner.Icon};
+  if(owner.IsVisible)dialog.Owner=owner;
+  var body=new StackPanel{Margin=new Thickness(24)};
+  var heading=Text(retry?"确认上一次重置结果":"使用 1 次额度重置？",19,"#EAF2FF");heading.FontWeight=FontWeights.SemiBold;body.Children.Add(heading);
+  body.Children.Add(new TextBlock{Text=retry?"上次请求的结果未确认。将沿用同一个请求标识重试，避免重复扣除同一次请求。":"确认后将使用账号的 1 次可用重置。可重置的额度窗口由 Codex 服务决定；本机 Token 历史不会被清空。",TextWrapping=TextWrapping.Wrap,FontSize=13,Foreground=Brush("#A6BCD9"),Margin=new Thickness(0,16,0,22)});
+  var actions=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
+  var cancel=new Button{Content="取消",IsCancel=true,IsDefault=true,Padding=new Thickness(18,9,18,9),Margin=new Thickness(0,0,10,0),Style=(Style)owner.FindResource(typeof(Button))};
+  var confirm=new Button{Content=retry?"重试上次请求":"消耗 1 次并重置",Padding=new Thickness(18,9,18,9),Background=Brush("#163D5C"),Foreground=Brush("#BCEAFF"),Style=(Style)owner.FindResource(typeof(Button))};
+  confirm.Click+=(s,e)=>dialog.DialogResult=true;actions.Children.Add(cancel);actions.Children.Add(confirm);body.Children.Add(actions);dialog.Content=body;
+  Theme.Apply(dialog,Theme.IsLight?"light":"dark");dialog.Loaded+=(s,e)=>cancel.Focus();return dialog;
+ }
+ async Task ResetQuota() {
+  if(busy||resetting||reset==null)return;
+  resetting=true;UpdateResetButton();C<Button>("RefreshButton").IsEnabled=false;
+  string message=null;bool attempted=false;
+  try {
+   try {
+   live=await account.Read(settings);if(!window.IsLoaded)return;RenderQuotas();
+   string reason=reset.UnavailableReason(live,settings.CodexHome);if(reason!=null){message=reason;return;}
+   string confirmedAccount=Json.S(live.Quotas,"accountId");
+   if(BuildResetDialog(window,reset.Pending!=null).ShowDialog()!=true)return;
+   // Revalidate after the dialog: the user may have switched Codex accounts elsewhere.
+   live=await account.Read(settings);
+   if(live.Quotas==null||Json.S(live.Quotas,"accountId")!=confirmedAccount){message="账户连接已变化，请刷新额度后重新确认。";return;}
+   reason=reset.UnavailableReason(live,settings.CodexHome);if(reason!=null){message=reason;return;}
+   attempted=true;
+   string outcome=await reset.Execute(live,settings.CodexHome,account.ConsumeReset);
+   message=outcome=="reset"?"额度重置成功，已使用 1 次重置。":outcome=="alreadyRedeemed"?"上一次重置已完成，本次没有重复扣除。":outcome=="nothingToReset"?"当前没有符合条件的额度窗口可重置。":"账号当前没有可用的重置次数。";
+  }catch {
+   message=reset.Pending!=null?"重置结果暂未确认。请点击“重试重置”，程序会沿用原请求标识，避免重复扣除。":"无法完成重置，请检查网络和本地文件权限后重试。";
+   }
+   if(attempted&&window.IsLoaded)live=await account.Read(settings);
+  }finally {
+   resetting=false;
+   if(window.IsLoaded) {
+    RenderQuotas();C<Button>("RefreshButton").IsEnabled=true;
+    if(message!=null) {
+     if(attempted&&live.Quotas==null)message+="\n最新额度暂未读取成功，请稍后刷新。";
+     MessageBox.Show(window,message,"额度重置");
+    }
+   }
+  }
  }
  FrameworkElement QuotaWindow(object w) {
   double minutes=Json.N(w,"windowDurationMins"),remaining=Math.Max(0,Math.Min(100,100-Json.N(w,"usedPercent")));bool known=Json.Get(w,"usedPercent")!=null;
@@ -265,9 +342,10 @@ class App {
  static string Csv(string value) {if(value.Length>0&&"=+-@".Contains(value[0]))value="'"+value;return "\""+value.Replace("\"","\"\"")+"\"";}
  void ShowSettings() {
   var menu=new ContextMenu();var auto=new MenuItem{Header="每 60 秒自动刷新",IsCheckable=true,IsChecked=settings.AutoRefresh};auto.Click+=(s,e)=>{settings.AutoRefresh=auto.IsChecked;settings.Save();RenderQuotas();};menu.Items.Add(auto);
-  var folder=new MenuItem{Header="选择 Codex 数据目录…",IsEnabled=!busy};folder.Click+=async(s,e)=>{using(var d=new Forms.FolderBrowserDialog{Description="选择包含 sessions 的 .codex 目录",SelectedPath=settings.CodexHome}){if(d.ShowDialog()==Forms.DialogResult.OK){settings.CodexHome=d.SelectedPath;settings.Save();logs=new LogReader();await Refresh();}}};menu.Items.Add(folder);
-  var exe=new MenuItem{Header="指定 codex.exe…",IsEnabled=!busy};exe.Click+=async(s,e)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex 程序|codex.exe"};if(d.ShowDialog(window)==true){settings.Executable=d.FileName;settings.Save();await Refresh();}};menu.Items.Add(exe);
-  var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.1\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。绿色圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n只读取用量，不发送提示词，不执行额度重置。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);menu.PlacementTarget=C<Button>("SettingsButton");menu.IsOpen=true;
+  var theme=new MenuItem{Header=Theme.IsLight?"切换为深色主题":"切换为浅色主题"};theme.Click+=(s,e)=>ToggleTheme();menu.Items.Add(theme);
+  var folder=new MenuItem{Header="选择 Codex 数据目录…",IsEnabled=!busy&&!resetting};folder.Click+=async(s,e)=>{using(var d=new Forms.FolderBrowserDialog{Description="选择包含 sessions 的 .codex 目录",SelectedPath=settings.CodexHome}){if(d.ShowDialog()==Forms.DialogResult.OK){settings.CodexHome=d.SelectedPath;settings.Save();logs=new LogReader();await Refresh();}}};menu.Items.Add(folder);
+  var exe=new MenuItem{Header="指定 codex.exe…",IsEnabled=!busy&&!resetting};exe.Click+=async(s,e)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex 程序|codex.exe"};if(d.ShowDialog(window)==true){settings.Executable=d.FileName;settings.Save();await Refresh();}};menu.Items.Add(exe);
+  var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.2\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);menu.PlacementTarget=C<Button>("SettingsButton");menu.IsOpen=true;
  }
  static void Diagnose() {
   var settings=Settings.Load();var logs=new LogReader().Read(settings.CodexHome,DateTime.Today.AddDays(-6));AccountResult live;using(var a=new AccountClient())live=a.Read(settings).GetAwaiter().GetResult();
@@ -286,7 +364,7 @@ static class Tests {
   p=LogReader.Parse(new StringReader(legacy(100)+"\n"+legacy(50)+"\n{\"type\":\"token_count\""),"test");Assert(p.Rows.Sum(x=>x.Total)==150&&p.Bad==1,"reset and truncated line");result.AppendLine("PASS counter reset and partial log");
   var dir=Path.Combine(Path.GetTempPath(),"codex-usage-tests-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(Path.Combine(dir,"sessions"));Directory.CreateDirectory(Path.Combine(dir,"archived_sessions"));
   try{var now=DateTimeOffset.Now.ToString("o");var current=modern.Replace(t,now);File.WriteAllText(Path.Combine(dir,"sessions","a.jsonl"),current);File.WriteAllText(Path.Combine(dir,"archived_sessions","b.jsonl"),current);var reader=new LogReader();var s=reader.Read(dir,DateTime.Today);Assert(s.Rows.Count==1,"response dedupe across files");result.AppendLine("PASS response deduplication across session/archive");File.AppendAllText(Path.Combine(dir,"sessions","a.jsonl"),"\n"+current.Replace("response-test","response-second"));s=reader.Read(dir,DateTime.Today);Assert(s.Rows.Count==2,"cache invalidation");result.AppendLine("PASS changed-file refresh");}finally{foreach(var f in Directory.GetFiles(dir,"*.jsonl",SearchOption.AllDirectories))File.Delete(f);Directory.Delete(Path.Combine(dir,"sessions"));Directory.Delete(Path.Combine(dir,"archived_sessions"));Directory.Delete(dir);}
-  Assert(new LogReader().Read(Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString()),DateTime.Today).Found==false,"missing directory");result.AppendLine("PASS missing data directory");result.AppendLine("ALL 7 CHECKS PASSED");
+  Assert(new LogReader().Read(Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString()),DateTime.Today).Found==false,"missing directory");result.AppendLine("PASS missing data directory");FeatureTests.Run(result);result.AppendLine("ALL CHECKS PASSED");
  }catch(Exception ex){result.AppendLine("FAIL: "+ex.Message);Environment.ExitCode=1;}File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"self-test.txt"),result.ToString());}
 }
 }
