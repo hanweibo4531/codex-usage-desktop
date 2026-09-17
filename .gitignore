@@ -7,6 +7,9 @@ diagnostics.json
 self-test.txt
 settings.json
 pending-reset.json
+request-schedule.json
+request-schedule-state.json
+request-task.xml
 *.log
 
 # IDE / OS files

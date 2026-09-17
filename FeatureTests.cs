@@ -136,6 +136,14 @@ static class FeatureTests {
     Check(((SolidColorBrush)dialog.Background).Color==(Color)ColorConverter.ConvertFromString(Theme.Resolve("#111B2B")),"confirmation theme");dialog.Close();
    }
    output.AppendLine("PASS first-attempt and retry confirmation default to cancel");
+   foreach(string theme in new[]{"dark","light"}) {
+    Theme.Apply(window,theme);var dialog=ScheduleDialog.Build(window,new RequestSchedule(),()=>{});
+    var content=(StackPanel)dialog.Content;content.Measure(new Size(422,double.PositiveInfinity));
+    Check(content.DesiredSize.Height<760,"schedule dialog fits common display height");
+    Check(content.Children.OfType<TextBox>().Count()==2&&content.Children.OfType<CheckBox>().Count()==2,"schedule times/model and enable/wake controls");
+    dialog.Close();
+   }
+   output.AppendLine("PASS schedule settings controls and both theme layouts");
    Theme.Apply(window,"dark");Check(Theme.Resolve("#EAF2FF")=="#EAF2FF","dark palette restored");
    Check(((SolidColorBrush)((Border)window.Content).Background).Color==dark,"live dark binding");window.Close();
    output.AppendLine("PASS XAML theme resources and both palettes");

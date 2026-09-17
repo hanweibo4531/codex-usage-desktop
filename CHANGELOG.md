@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0
+
+- Added configurable daily lightweight Codex requests with presets for 05:00 and 05:00/10:00/15:00.
+- Added per-user Windows scheduled tasks, optional sleep wake-up, and next-run/last-result display.
+- Persisted intent before sending and synchronized desktop/background workers to avoid duplicate requests across restarts.
+- Skipped missed slots after a two-minute grace period; failed or uncertain requests are not automatically retried.
+- Isolated scheduled requests in ephemeral read-only Codex sessions, using ChatGPT login instead of API-key environment variables.
+- Added schedule validation, persistence, duplicate/restart protection, Task Scheduler XML and settings-layout checks.
+
 ## 1.3.0
 
 - Added four quota analysis cards, estimated weekly USD value, daily account Credits and history totals.

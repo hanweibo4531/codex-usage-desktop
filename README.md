@@ -20,6 +20,7 @@
 - 每 60 秒自动刷新，查询失败时标记带时间的日志快照。
 - 窗口置顶、系统托盘、手动刷新与可配置数据目录。
 - 深色科技风与浅色主题一键切换，自动记住上次选择。
+- 定时发送轻量请求：每日自定义多个时间点、可选睡眠唤醒，显示下次执行与上次结果。
 - 独立应用图标，覆盖 EXE、任务栏、窗口和托盘，包含 16–256 像素七种尺寸。
 
 ## 下载与运行
@@ -45,6 +46,21 @@
 | 导出 CSV | 导出当前时段与模型的全部记录 |
 
 默认不会设置开机启动。配置保存在 `%LOCALAPPDATA%/CodexUsage/settings.json`。
+
+## 定时发送请求
+
+在面板的“设置定时”或“设置 → 定时发送请求”中启用，填写每天的本机时间，例如 `05:00`，或 `05:00, 10:00, 15:00`。保存后从下一个时间点开始，不会立即发送；也可在同一窗口停用。模型可选，留空使用 Codex 默认模型。
+
+每个时间点启动一次 `codex exec`，固定请求“只回复 OK”，使用当前 Codex 数据目录中的 ChatGPT 登录状态。请求运行于独立空目录，使用只读沙箱、临时会话，禁用 shell 工具与交互式审批，不加载用户自定义配置，不使用 API Key 环境变量。需要支持 `--ignore-user-config` 的新版 Codex CLI；认证仍由 Codex 自己处理。
+
+- 默认不开启定时。启用后会创建当前 Windows 用户的任务 `CodexUsage-AutoRequest-<用户 SID>`；不需要提供密码，也不以管理员权限执行。
+- 关闭用量面板后 Windows 仍可执行计划，但必须保持当前 Windows 用户登录、电脑开机且网络可用。
+- 可勾选尝试唤醒睡眠电脑；唤醒效果取决于设备与 Windows 电源设置，不能从关机状态启动。
+- 允许两分钟启动延迟；超过两分钟的错过任务不补发。一次请求最长等待两分钟；失败、超时或结果未确认都不会对同一时间点自动重试。
+- 发送前持久化记录，面板与 Windows 任务共享互斥锁，重启后也不会重复执行已开始的同一日期/时间。
+- 计划与结果分别保存在 `%LOCALAPPDATA%/CodexUsage/request-schedule.json`、`request-schedule-state.json`。记录只含时间、状态和简短结果，不保存模型输出或登录令牌。移动程序目录后需要重新保存计划，以更新 Windows 任务的程序路径。
+
+定时请求会消耗实际用量，作用是按时发起普通请求。五小时窗口起点、重置时间、周限制由服务端决定，不能保证“05:00 请求一定在 10:00 重置”或“每天得到三份完整额度”；以面板返回的实际重置时间为准。它不会调用额度重置接口或消耗重置券。官方说明：[非交互执行](https://learn.chatgpt.com/docs/non-interactive-mode)、[用量限制](https://learn.chatgpt.com/docs/pricing)。
 
 ## 从源码构建
 
@@ -112,6 +128,9 @@ Main.xaml               深色科技风 WPF 界面
 Theme.cs                深浅主题配色
 ResetCoordinator.cs     可重试的额度重置与持久化
 WeeklyQuota.cs          账户 Credits 明细、周价值估算与 30 天历史
+RequestSchedule.cs      定时计划、Windows 任务、执行记录与防重
+ScheduleDialog.cs       定时设置窗口
+ScheduleTests.cs        定时与任务配置回归测试
 FeatureTests.cs         主题、图标和重置回归测试
 assets/                 多尺寸 ICO 与 PNG 图标
 tools/New-AppIcon.ps1    可复现的图标生成脚本

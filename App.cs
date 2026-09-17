@@ -20,8 +20,8 @@ using Forms = System.Windows.Forms;
 
 [assembly: AssemblyTitle("Codex Usage Desktop")]
 [assembly: AssemblyDescription("Codex quota and token usage monitor")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 
 namespace CodexUsage {
 static class Json {
@@ -160,7 +160,7 @@ class AccountClient : IDisposable {
     process.ErrorDataReceived+=(s,e)=>{};
     process.Exited+=(s,e)=>{lock(gate){foreach(var t in pending.Values)t.TrySetException(new IOException("Codex 服务已退出"));}};
     process.Start();process.BeginOutputReadLine();process.BeginErrorReadLine();
-    await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.3.0"}});
+    await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.4.0"}});
     process.StandardInput.WriteLine("{\"method\":\"initialized\"}");process.StandardInput.Flush();
    }
    var result=await Call("account/rateLimits/read",null);
@@ -177,6 +177,7 @@ class App {
  DispatcherTimer timer; Forms.NotifyIcon tray; bool busy,updatingFilter,resetting; int days=1;
  ResetCoordinator reset; string resetStorageError;
  WeeklyQuota weekly=new WeeklyQuota(); int historyDays=30;
+ DispatcherTimer scheduleTimer;bool scheduleBusy;
  T C<T>(string name) where T:FrameworkElement {return (T)window.FindName(name);}
  static SolidColorBrush Brush(string color) {return (SolidColorBrush)new BrushConverter().ConvertFromString(Theme.Resolve(color));}
  static TextBlock Text(string value,double size,string color) {return new TextBlock{Text=value,FontSize=size,Foreground=Brush(color),VerticalAlignment=VerticalAlignment.Center};}
@@ -184,6 +185,7 @@ class App {
  [STAThread] public static void Main(string[] args) {
   if(args.Contains("--self-test")){Tests.Run();return;}
   if(args.Contains("--diagnose")){Diagnose();return;}
+  if(args.Contains("--scheduled-request")){try{ScheduledRequest.RunDue().GetAwaiter().GetResult();}catch{Environment.ExitCode=1;}return;}
   bool created;using(var mutex=new Mutex(true,"Local\\CodexUsageDesktop",out created)){
    if(!created){MessageBox.Show("Codex 用量已在运行，请从系统托盘打开。","Codex 用量");return;}
    var application=new Application();application.DispatcherUnhandledException+=(s,e)=>{MessageBox.Show("操作失败，请稍后重试。\n"+e.Exception.GetType().Name,"Codex 用量");e.Handled=true;};
@@ -210,10 +212,12 @@ class App {
   C<Button>("MonthButton").Click+=(s,e)=>{days=30;RenderLocal();};
   C<ComboBox>("ModelFilter").SelectionChanged+=(s,e)=>{if(!updatingFilter)RenderLocal();};
   C<Button>("ExportButton").Click+=(s,e)=>Export();C<Button>("SettingsButton").Click+=(s,e)=>ShowSettings();
+  C<Button>("ScheduleButton").Click+=(s,e)=>ShowSchedule();
   tray=new Forms.NotifyIcon{Text="Codex 用量",Icon=MakeIcon(),Visible=true};tray.MouseClick+=(s,e)=>{if(e.Button==Forms.MouseButtons.Left)ShowWindow();};
   var menu=new Forms.ContextMenuStrip();menu.Items.Add("打开用量面板",null,(s,e)=>ShowWindow());menu.Items.Add("立即刷新",null,async(s,e)=>await Refresh());menu.Items.Add("退出",null,(s,e)=>window.Close());tray.ContextMenuStrip=menu;
   timer=new DispatcherTimer{Interval=TimeSpan.FromSeconds(60)};timer.Tick+=async(s,e)=>{if(settings.AutoRefresh)await Refresh();};timer.Start();
-  window.Closed+=(s,e)=>{timer.Stop();tray.Visible=false;tray.Icon.Dispose();tray.Dispose();account.Dispose();};
+  scheduleTimer=new DispatcherTimer{Interval=TimeSpan.FromSeconds(15)};scheduleTimer.Tick+=async(s,e)=>await TickSchedule();scheduleTimer.Start();UpdateScheduleStatus();
+  window.Closed+=(s,e)=>{timer.Stop();scheduleTimer.Stop();tray.Visible=false;tray.Icon.Dispose();tray.Dispose();account.Dispose();};
   window.Loaded+=async(s,e)=>await Refresh();RenderQuotas();
  }
  static System.Drawing.Icon MakeIcon() {
@@ -221,6 +225,25 @@ class App {
   using(var icon=new System.Drawing.Icon(stream,32,32))return (System.Drawing.Icon)icon.Clone();
  }
  void ShowWindow() {window.Show();window.WindowState=WindowState.Normal;window.Activate();}
+ async Task TickSchedule() {
+  if(scheduleBusy)return;scheduleBusy=true;
+  try {bool sent=await ScheduledRequest.RunDue();if(window.IsLoaded){UpdateScheduleStatus();if(sent)await Refresh();}}
+  catch {if(window.IsLoaded)C<TextBlock>("ScheduleLast").Text="定时记录或配置不可读，执行已暂停；请检查设置。";}
+  finally {scheduleBusy=false;}
+ }
+ void UpdateScheduleStatus() {
+  try {
+   var schedule=RequestSchedule.Load();var rows=RequestHistory.Load(RequestSchedule.StateFile);var next=schedule.Next(DateTime.Now,rows);
+   C<TextBlock>("ScheduleSummary").Text=!schedule.Enabled?"定时请求 · 未启用":"下次请求 · "+(next.HasValue?next.Value.ToString("MM/dd HH:mm"):"等待下一个时间点");
+   var last=rows.OrderByDescending(r=>r.Slot,StringComparer.Ordinal).FirstOrDefault();
+   C<TextBlock>("ScheduleLast").Text=last==null?"可设置每天 05:00、10:00、15:00":last.Slot+" · "+(last.Status=="success"?"成功":last.Status=="failed"?"失败":last.Status=="running"?"已开始 / 结果待确认":"结果未确认");
+   C<TextBlock>("ScheduleLast").ToolTip=last==null?"请求不会强制重置额度；计时以服务端返回为准。":last.Message;
+  }catch {C<TextBlock>("ScheduleSummary").Text="定时请求 · 配置需检查";C<TextBlock>("ScheduleLast").Text="未自动发送，请检查定时配置和记录文件。";}
+ }
+ void ShowSchedule() {
+  RequestSchedule options;try{options=RequestSchedule.Load();}catch{options=new RequestSchedule();}
+  var dialog=ScheduleDialog.Build(window,options,UpdateScheduleStatus);dialog.ShowDialog();UpdateScheduleStatus();
+ }
  async Task Refresh() {
   if(busy||resetting)return;busy=true;UpdateResetButton();C<Button>("RefreshButton").IsEnabled=false;C<Button>("RefreshButton").Content="同步中…";
   try {
@@ -422,6 +445,7 @@ class App {
   // A ContextMenu lives in a separate popup tree; explicitly share the palette and templates.
   menu.Resources.MergedDictionaries.Add(window.Resources);
   var auto=new MenuItem{Header="每 60 秒自动刷新",IsCheckable=true,IsChecked=settings.AutoRefresh};auto.Click+=(s,e)=>{settings.AutoRefresh=auto.IsChecked;settings.Save();RenderQuotas();};menu.Items.Add(auto);
+  var scheduled=new MenuItem{Header="定时发送请求…"};scheduled.Click+=(s,e)=>ShowSchedule();menu.Items.Add(scheduled);
   var credits=new MenuItem{Header="账户 Credits 查询（联网）",IsCheckable=true,IsChecked=settings.AccountCredits,IsEnabled=!busy&&!resetting};
   credits.Click+=async(s,e)=> {
    if(credits.IsChecked&&MessageBox.Show(window,"读取账户 Credits 明细需要使用当前 Codex 数据目录 auth.json 中的登录令牌与账户标识，发送到 https://chatgpt.com/backend-api/wham/ 的只读用量接口。\n\n令牌仅在内存使用，不保存、不输出，也不发送到第三方。开启后随刷新查询；你可以随时在设置中关闭。\n\n允许开启？","账户 Credits 查询",MessageBoxButton.YesNo,MessageBoxImage.Question,MessageBoxResult.No)!=MessageBoxResult.Yes){credits.IsChecked=false;return;}
@@ -432,7 +456,7 @@ class App {
   var folder=new MenuItem{Header="选择 Codex 数据目录…",IsEnabled=!busy&&!resetting};folder.Click+=async(s,e)=>{using(var d=new Forms.FolderBrowserDialog{Description="选择包含 sessions 的 .codex 目录",SelectedPath=settings.CodexHome}){if(d.ShowDialog()==Forms.DialogResult.OK){settings.CodexHome=d.SelectedPath;settings.Save();logs=new LogReader();await Refresh();}}};menu.Items.Add(folder);
   var exe=new MenuItem{Header="指定 codex.exe…",IsEnabled=!busy&&!resetting};exe.Click+=async(s,e)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex 程序|codex.exe"};if(d.ShowDialog(window)==true){settings.Executable=d.FileName;settings.Save();await Refresh();}};menu.Items.Add(exe);
   menu.Items.Add(new Separator{Style=(Style)window.FindResource("MenuDivider")});
-  var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.3.0\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
+  var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.4.0\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
   menu.PlacementTarget=C<Button>("SettingsButton");menu.Placement=System.Windows.Controls.Primitives.PlacementMode.Custom;
   menu.CustomPopupPlacementCallback=(popup,target,offset)=>new[]{new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,-popup.Height-8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal),new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,target.Height+8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal)};
   menu.IsOpen=true;
@@ -454,7 +478,7 @@ static class Tests {
   p=LogReader.Parse(new StringReader(legacy(100)+"\n"+legacy(50)+"\n{\"type\":\"token_count\""),"test");Assert(p.Rows.Sum(x=>x.Total)==150&&p.Bad==1,"reset and truncated line");result.AppendLine("PASS counter reset and partial log");
   var dir=Path.Combine(Path.GetTempPath(),"codex-usage-tests-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(Path.Combine(dir,"sessions"));Directory.CreateDirectory(Path.Combine(dir,"archived_sessions"));
   try{var now=DateTimeOffset.Now.ToString("o");var current=modern.Replace(t,now);File.WriteAllText(Path.Combine(dir,"sessions","a.jsonl"),current);File.WriteAllText(Path.Combine(dir,"archived_sessions","b.jsonl"),current);var reader=new LogReader();var s=reader.Read(dir,DateTime.Today);Assert(s.Rows.Count==1,"response dedupe across files");result.AppendLine("PASS response deduplication across session/archive");File.AppendAllText(Path.Combine(dir,"sessions","a.jsonl"),"\n"+current.Replace("response-test","response-second"));s=reader.Read(dir,DateTime.Today);Assert(s.Rows.Count==2,"cache invalidation");result.AppendLine("PASS changed-file refresh");}finally{foreach(var f in Directory.GetFiles(dir,"*.jsonl",SearchOption.AllDirectories))File.Delete(f);Directory.Delete(Path.Combine(dir,"sessions"));Directory.Delete(Path.Combine(dir,"archived_sessions"));Directory.Delete(dir);}
-  Assert(new LogReader().Read(Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString()),DateTime.Today).Found==false,"missing directory");result.AppendLine("PASS missing data directory");FeatureTests.Run(result);result.AppendLine("ALL CHECKS PASSED");
+  Assert(new LogReader().Read(Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString()),DateTime.Today).Found==false,"missing directory");result.AppendLine("PASS missing data directory");FeatureTests.Run(result);ScheduleTests.Run(result);result.AppendLine("ALL CHECKS PASSED");
  }catch(Exception ex){result.AppendLine("FAIL: "+ex.Message);Environment.ExitCode=1;}File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"self-test.txt"),result.ToString());}
 }
 }
