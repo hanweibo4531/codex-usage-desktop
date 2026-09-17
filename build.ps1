@@ -5,6 +5,7 @@ $refs = @('System.dll','System.Core.dll','System.Web.Extensions.dll','System.Xam
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
 $compilerArgs = @('/nologo', '/target:winexe', '/platform:anycpu', '/optimize+', '/utf8output', ('/win32manifest:' + "$PSScriptRoot\app.manifest"), ('/win32icon:' + "$PSScriptRoot\assets\app.ico"), ('/out:' + "$OutputDirectory\CodexUsage.exe"), ('/resource:' + "$PSScriptRoot\Main.xaml,Main.xaml"), ('/resource:' + "$PSScriptRoot\assets\app.ico,app.ico"), ('/resource:' + "$PSScriptRoot\assets\app.png,app.png")) + $refs + @("$PSScriptRoot\App.cs", "$PSScriptRoot\Theme.cs", "$PSScriptRoot\ResetCoordinator.cs", "$PSScriptRoot\FeatureTests.cs")
+$compilerArgs += "$PSScriptRoot\WeeklyQuota.cs"
 & "$framework/csc.exe" @compilerArgs
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 Copy-Item -LiteralPath "$PSScriptRoot/README.md" -Destination "$OutputDirectory/README.md" -Force

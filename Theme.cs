@@ -28,7 +28,7 @@ static class Theme {
   {"#223148","#DFE8F3"},{"#F07783","#CF4254"},{"#FFBA69","#A76811"},
   {"#8CA3C2","#597593"},{"#A6BCD9","#4B688A"},{"#142034","#F2F6FB"}
  };
- public static string Resolve(string color) {string value;return IsLight&&Light.TryGetValue(color,out value)?value:color;}
+ public static string Resolve(string color) {if(IsLight){if(color=="#35C9A0")return "#009B78";if(color=="#10352F")return "#EDFAF4";if(color=="#226653")return "#CBEEDD";}string value;return IsLight&&Light.TryGetValue(color,out value)?value:color;}
  public static void Apply(Window window,string theme) {
   IsLight=theme=="light";
   foreach(var pair in Light) {

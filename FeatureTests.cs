@@ -21,6 +21,34 @@ static class FeatureTests {
  public static void Run(StringBuilder output) {
   string dir=Path.Combine(Path.GetTempPath(),"codex-feature-tests-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(dir);
   try {
+   var moment=new DateTime(2026,9,17,12,0,0,DateTimeKind.Utc);
+   Func<int,object> weekUsage=p=>Json.Read(Json.Write(new{plan_type="pro",rate_limit=new{secondary_window=new{used_percent=p,limit_window_seconds=604800,reset_at=1789948800}}}));
+   var daily=Json.Read("{\"data\":[{\"date\":\"2026-09-17\",\"totals\":{\"credits\":30160.6,\"text_total_tokens\":123000,\"turns\":8}},{\"date\":\"2026-08-19\",\"totals\":{\"credits\":25}},{\"date\":\"2026-08-18\",\"totals\":{\"credits\":99}}]}");
+   var week=WeeklyQuota.Parse(weekUsage(83),daily,moment);
+   Check(week.UsedCredits==30160.6m&&Math.Round(week.TotalCredits.Value,1)==36338.1m&&Math.Round(week.Dollars.Value,2)==1453.52m,"reference screenshot weekly estimate");
+   Check(week.Days.Count==2&&week.Days.Sum(d=>d.Credits)==30185.6m,"30-day range includes day 30 and excludes day 31");
+   Check(!WeeklyQuota.Parse(weekUsage(0),daily,moment).TotalCredits.HasValue,"zero percentage never divides");
+   Check(!WeeklyQuota.Parse(weekUsage(101),daily,moment).TotalCredits.HasValue,"invalid percentage");
+   Check(!WeeklyQuota.Parse(weekUsage(83),Json.Read("{}"),moment).UsedCredits.HasValue,"missing credits not zero");
+   var duplicates=Json.Read("{\"data\":[{\"date\":\"2026-09-17\",\"totals\":{\"credits\":1}},{\"date\":\"2026-09-17\",\"totals\":{\"credits\":1}}]}");
+   Check(WeeklyQuota.Parse(weekUsage(83),duplicates,moment).Days.Count==0,"duplicate dates rejected without partial totals");
+   Check(!WeeklyQuota.Parse(weekUsage(83),daily,moment.AddDays(8)).TotalCredits.HasValue,"expired cycle rejected");
+   output.AppendLine("PASS weekly estimate matches screenshot; 30-day boundary, missing data, duplicate and reset guards");
+   Check(CreditBalance.Read(Json.Read("{\"balance\":\"2500\"}")).Amount=="≈ $100.00","credits converted to dollars, not treated as dollars");
+   Check(CreditBalance.Read(Json.Read("{\"balance\":\"0\",\"hasCredits\":false}")).Amount=="≈ $0.00","explicit zero balance");
+   Check(CreditBalance.Read(Json.Read("{\"balance\":\"-25\"}")).Amount=="≈ -$1.00","negative balance retained");
+   Check(CreditBalance.Read(Json.Read("{\"balance\":\"0.01\"}")).Amount=="< $0.01","tiny positive balance not rounded to zero");
+   Check(CreditBalance.Read(Json.Read("{\"balance\":\"-0.01\"}")).Amount=="负余额 < $0.01","tiny negative balance retained");
+   foreach(string value in new[]{"null","{}","{\"hasCredits\":false}","{\"hasCredits\":true}","{\"balance\":null}","{\"balance\":\"NaN\"}","{\"balance\":\"1,2\"}"})
+    Check(CreditBalance.Read(Json.Read(value)).Amount=="未提供","unknown balance must not become zero: "+value);
+   Check(CreditBalance.Read(Json.Read("{\"unlimited\":true,\"balance\":\"0\"}")).Amount=="无限额度","unlimited takes precedence");
+   var oldCulture=System.Threading.Thread.CurrentThread.CurrentCulture;
+   try {System.Threading.Thread.CurrentThread.CurrentCulture=new System.Globalization.CultureInfo("de-DE");Check(CreditBalance.Read(Json.Read("{\"balance\":\"312.5\"}")).Amount=="≈ $12.50","invariant monetary parsing");}
+   finally {System.Threading.Thread.CurrentThread.CurrentCulture=oldCulture;}
+   string quotaLog="{\"timestamp\":\"2026-09-17T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"credits\":{\"balance\":\"2500\",\"has_credits\":true,\"unlimited\":false}}}}";
+   var historicalCredits=Json.Get(LogReader.Parse(new StringReader(quotaLog),"credit-test").Quota,"credits");
+   Check(CreditBalance.Read(historicalCredits).Amount=="≈ $100.00"&&Json.Get(historicalCredits,"hasCredits") as bool? ==true,"log credits normalization");
+   output.AppendLine("PASS USD conversion, zero, negative, small, unknown, unlimited and historical credit balances");
    var state=State(3,"test-account");
    foreach(string outcome in new[]{"reset","alreadyRedeemed","nothingToReset","noCredit"}) {
     ResetTicket saved=null;var coordinator=new ResetCoordinator(null,t=>saved=t);
@@ -65,7 +93,7 @@ static class FeatureTests {
    output.AppendLine("PASS unknown outcome retained and corrupted state rejected");
 
    string previous=Settings.FileName;
-   try {Settings.FileName=Path.Combine(dir,"settings.json");new Settings{CodexHome=dir,Theme="light"}.Save();Check(Settings.Load().Theme=="light","theme persistence");}
+   try {Settings.FileName=Path.Combine(dir,"settings.json");new Settings{CodexHome=dir,Theme="light"}.Save();Check(Settings.Load().Theme=="light"&&!Settings.Load().AccountCredits,"theme persistence and credits opt-in default");new Settings{CodexHome=dir,AccountCredits=true}.Save();Check(Settings.Load().AccountCredits,"explicit credits opt-in persists");}
    finally{Settings.FileName=previous;}
    output.AppendLine("PASS saved theme restored");
 
@@ -74,6 +102,30 @@ static class FeatureTests {
    Theme.Apply(window,"dark");
    foreach(Match match in Regex.Matches(xaml,@"\{DynamicResource (Brush[0-9A-Fa-f]{6})\}"))Check(window.Resources.Contains(match.Groups[1].Value),"unmapped theme token");
    var dark=((SolidColorBrush)window.Resources["Brush080D16"]).Color;
+   Check(window.FindName("MonthButton")!=null,"month filter exists");
+   foreach(double width in new[]{390.0,660.0}) {
+    var weeklyCard=App.BuildWeeklyQuota(week);weeklyCard.Measure(new Size(width,double.PositiveInfinity));weeklyCard.Arrange(new Rect(0,0,width,weeklyCard.DesiredSize.Height));weeklyCard.UpdateLayout();
+    Check(weeklyCard.ActualWidth==width,"weekly card width");
+   }
+   var table=App.BuildCreditTable(week.Days);Check(table.Children.Count==3,"monthly table has header, scroll area and totals");
+   // Exercise the actual local filter and chart at the 30-day boundary without network access.
+   var instance=new App();var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+   typeof(App).GetField("window",flags).SetValue(instance,window);
+   typeof(App).GetField("days",flags).SetValue(instance,30);
+   var local=new Snapshot();local.Rows.Add(new Usage{Time=DateTime.Today.AddDays(-29),Model="test",Total=10});local.Rows.Add(new Usage{Time=DateTime.Today.AddDays(-30),Model="test",Total=90});
+   typeof(App).GetField("snapshot",flags).SetValue(instance,local);
+   typeof(App).GetMethod("RenderLocal",flags).Invoke(instance,null);
+   Check(((TextBlock)window.FindName("TokenTotal")).Text=="10"&&((Grid)window.FindName("Chart")).ColumnDefinitions.Count==30,"month filter and 30 chart buckets");
+   output.AppendLine("PASS monthly local filter, daily chart and account history table");
+   foreach(string theme in new[]{"dark","light"}) {
+    Theme.Apply(window,theme);
+    var card=App.BuildCreditBalance(historicalCredits,true);var body=(StackPanel)card.Child;
+    Check(((TextBlock)body.Children[0]).Text.Contains("历史快照")&&((TextBlock)body.Children[1]).Text=="≈ $100.00","historical USD card text");
+    Check(((SolidColorBrush)card.Background).Color==(Color)ColorConverter.ConvertFromString(Theme.Resolve("#0E2438")),"balance card theme");
+    card.Measure(new Size(380,double.PositiveInfinity));card.Arrange(new Rect(0,0,380,card.DesiredSize.Height));
+    Check(card.DesiredSize.Height>80&&card.DesiredSize.Height<180,"balance card layout");
+   }
+   output.AppendLine("PASS balance card historical label, layout and both themes");
    Theme.Apply(window,"light");var light=((SolidColorBrush)window.Resources["Brush080D16"]).Color;
    Check(light.R>dark.R&&Theme.Resolve("#EAF2FF")=="#172B46","light palette");
    Check(((SolidColorBrush)((Border)window.Content).Background).Color==light,"live light binding");

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.0
+
+- Added four quota analysis cards, estimated weekly USD value, daily account Credits and history totals.
+- Added 7/30-day account history selection and a 30-day local usage filter, chart and CSV range.
+- Added read-only ChatGPT analytics requests using the existing local credential, with explicit unavailable states and no credential logging or persistence.
+- Guarded estimates against missing/duplicate data, zero percentages, expired cycles and mismatched account scope.
+
+## 1.2.1
+
+- Replaced the native settings menu with rounded, theme-aware rows and right-aligned checkmarks.
+- Added a compact scrollbar with a wider hit area and hover/drag feedback.
+- Restyled the model selector and its popup to match both light and dark themes.
+- Positioned the settings popup above and right-aligned with its button.
+
 ## 1.2.0
 
 - Added a seven-size application icon embedded in the EXE, window, taskbar, and tray.

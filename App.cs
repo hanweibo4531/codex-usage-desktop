@@ -20,8 +20,8 @@ using Forms = System.Windows.Forms;
 
 [assembly: AssemblyTitle("Codex Usage Desktop")]
 [assembly: AssemblyDescription("Codex quota and token usage monitor")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 
 namespace CodexUsage {
 static class Json {
@@ -71,7 +71,8 @@ class LogReader {
   result.Rows=result.Modern?modern:legacy; return result;
  }
  static object NormalizeWindow(object x) { if(x==null)return null;return new {usedPercent=Json.Get(x,"used_percent"),windowDurationMins=Json.Get(x,"window_minutes"),resetsAt=Json.Get(x,"resets_at")}; }
- static object NormalizeQuota(object q) { return Json.Read(Json.Write(new {limitId=Json.S(q,"limit_id"),limitName=Json.Get(q,"limit_name"),planType=Json.Get(q,"plan_type"),primary=NormalizeWindow(Json.Get(q,"primary")),secondary=NormalizeWindow(Json.Get(q,"secondary"))})); }
+ static object NormalizeCredits(object c) { if(c==null)return null;return new {hasCredits=Json.Get(c,"has_credits")??Json.Get(c,"hasCredits"),unlimited=Json.Get(c,"unlimited"),balance=Json.Get(c,"balance")}; }
+ static object NormalizeQuota(object q) { return Json.Read(Json.Write(new {limitId=Json.S(q,"limit_id"),limitName=Json.Get(q,"limit_name"),planType=Json.Get(q,"plan_type"),credits=NormalizeCredits(Json.Get(q,"credits")),primary=NormalizeWindow(Json.Get(q,"primary")),secondary=NormalizeWindow(Json.Get(q,"secondary"))})); }
  public Snapshot Read(string home,DateTime from) {
   var snapshot=new Snapshot(); var files=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
   foreach(var sub in new[]{"sessions","archived_sessions"}) {
@@ -99,16 +100,32 @@ class LogReader {
   snapshot.Rows=snapshot.Rows.OrderByDescending(r=>r.Time).ToList(); return snapshot;
  }
 }
+class CreditBalance {
+ // Official reference: https://developers.openai.com/community/students (2,500 credits = $100).
+ // This is a reference conversion of extra credits, not a dollar value for plan rate limits.
+ public const decimal CreditsPerDollar=25m;
+ public string Amount="未提供",Detail="账户未提供余额，套餐百分比无法直接折算美元。";
+ public static CreditBalance Read(object credits) {
+  var result=new CreditBalance();
+  if(Json.Get(credits,"unlimited") as bool? == true) {result.Amount="无限额度";result.Detail="账户返回无限 Credits，无法折算为固定金额。";return result;}
+  decimal balance;
+  if(!decimal.TryParse(Json.S(credits,"balance"),NumberStyles.AllowLeadingSign|NumberStyles.AllowDecimalPoint|NumberStyles.AllowLeadingWhite|NumberStyles.AllowTrailingWhite,CultureInfo.InvariantCulture,out balance))return result;
+  decimal dollars=balance/CreditsPerDollar;
+  result.Amount=dollars>0&&dollars<0.01m?"< $0.01":dollars<0&&dollars>-0.01m?"负余额 < $0.01":"≈ "+(dollars<0?"-$":"$")+Math.Abs(dollars).ToString("N2",CultureInfo.InvariantCulture);
+  result.Detail=balance.ToString("0.############################",CultureInfo.InvariantCulture)+" Credits · 按 25 Credits ≈ $1 估算";
+  return result;
+ }
+}
 class Settings {
- public string CodexHome; public string Executable; public bool AutoRefresh=true; public string Theme="dark";
+ public string CodexHome; public string Executable; public bool AutoRefresh=true,AccountCredits=false; public string Theme="dark";
  public static string FileName=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"CodexUsage","settings.json");
  public static Settings Load() {
   var s=new Settings {CodexHome=Environment.GetEnvironmentVariable("CODEX_HOME")};
   if(string.IsNullOrEmpty(s.CodexHome))s.CodexHome=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),".codex");
-  try { var j=Json.Read(File.ReadAllText(FileName)); if(Json.S(j,"home")!="")s.CodexHome=Json.S(j,"home");s.Executable=Json.S(j,"exe");s.AutoRefresh=Json.Get(j,"auto") as bool? ?? true;s.Theme=Json.S(j,"theme")=="light"?"light":"dark"; }catch{}
+  try { var j=Json.Read(File.ReadAllText(FileName)); if(Json.S(j,"home")!="")s.CodexHome=Json.S(j,"home");s.Executable=Json.S(j,"exe");s.AutoRefresh=Json.Get(j,"auto") as bool? ?? true;s.AccountCredits=Json.Get(j,"accountCredits") as bool? ?? false;s.Theme=Json.S(j,"theme")=="light"?"light":"dark"; }catch{}
   return s;
  }
- public void Save() { Directory.CreateDirectory(Path.GetDirectoryName(FileName));File.WriteAllText(FileName,Json.Write(new{home=CodexHome,exe=Executable,auto=AutoRefresh,theme=Theme}),Encoding.UTF8); }
+ public void Save() { Directory.CreateDirectory(Path.GetDirectoryName(FileName));File.WriteAllText(FileName,Json.Write(new{home=CodexHome,exe=Executable,auto=AutoRefresh,theme=Theme,accountCredits=AccountCredits}),Encoding.UTF8); }
 }
 class AccountResult { public object Quotas; public DateTime Time; public string Error; }
 class AccountClient : IDisposable {
@@ -143,7 +160,7 @@ class AccountClient : IDisposable {
     process.ErrorDataReceived+=(s,e)=>{};
     process.Exited+=(s,e)=>{lock(gate){foreach(var t in pending.Values)t.TrySetException(new IOException("Codex 服务已退出"));}};
     process.Start();process.BeginOutputReadLine();process.BeginErrorReadLine();
-    await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.2.0"}});
+    await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.3.0"}});
     process.StandardInput.WriteLine("{\"method\":\"initialized\"}");process.StandardInput.Flush();
    }
    var result=await Call("account/rateLimits/read",null);
@@ -159,6 +176,7 @@ class App {
  Window window; Settings settings; AccountClient account=new AccountClient(); LogReader logs=new LogReader(); Snapshot snapshot=new Snapshot(); AccountResult live=new AccountResult();
  DispatcherTimer timer; Forms.NotifyIcon tray; bool busy,updatingFilter,resetting; int days=1;
  ResetCoordinator reset; string resetStorageError;
+ WeeklyQuota weekly=new WeeklyQuota(); int historyDays=30;
  T C<T>(string name) where T:FrameworkElement {return (T)window.FindName(name);}
  static SolidColorBrush Brush(string color) {return (SolidColorBrush)new BrushConverter().ConvertFromString(Theme.Resolve(color));}
  static TextBlock Text(string value,double size,string color) {return new TextBlock{Text=value,FontSize=size,Foreground=Brush(color),VerticalAlignment=VerticalAlignment.Center};}
@@ -189,6 +207,7 @@ class App {
   C<Button>("ResetButton").Click+=async(s,e)=>await ResetQuota();
   C<Button>("ThemeButton").Click+=(s,e)=>ToggleTheme();UpdateThemeButton();
   C<Button>("TodayButton").Click+=(s,e)=>{days=1;RenderLocal();};C<Button>("WeekButton").Click+=(s,e)=>{days=7;RenderLocal();};
+  C<Button>("MonthButton").Click+=(s,e)=>{days=30;RenderLocal();};
   C<ComboBox>("ModelFilter").SelectionChanged+=(s,e)=>{if(!updatingFilter)RenderLocal();};
   C<Button>("ExportButton").Click+=(s,e)=>Export();C<Button>("SettingsButton").Click+=(s,e)=>ShowSettings();
   tray=new Forms.NotifyIcon{Text="Codex 用量",Icon=MakeIcon(),Visible=true};tray.MouseClick+=(s,e)=>{if(e.Button==Forms.MouseButtons.Left)ShowWindow();};
@@ -206,10 +225,12 @@ class App {
   if(busy||resetting)return;busy=true;UpdateResetButton();C<Button>("RefreshButton").IsEnabled=false;C<Button>("RefreshButton").Content="同步中…";
   try {
    var fetch=account.Read(settings);
-   snapshot=await Task.Run(()=>logs.Read(settings.CodexHome,DateTime.Today.AddDays(-6)));
+   snapshot=await Task.Run(()=>logs.Read(settings.CodexHome,DateTime.Today.AddDays(-29)));
    if(!window.IsLoaded)return;
    UpdateModels();RenderLocal();
-   live=await fetch;
+   live=await fetch;weekly=new WeeklyQuota{Note="正在读取近 30 天账户 Credits…"};
+   if(window.IsLoaded)RenderQuotas();
+   weekly=!settings.AccountCredits?new WeeklyQuota{Note="在设置中开启“账户 Credits 查询”后显示周价值和历史明细"}:live.Quotas==null?new WeeklyQuota{Note="实时额度未连接，周价值暂不可用"}:await WeeklyQuotaClient.Read(settings.CodexHome,Json.S(live.Quotas,"accountId"));
    if(window.IsLoaded)RenderQuotas();
   }catch{if(window.IsLoaded)C<TextBlock>("StatusText").Text="读取失败，请检查数据目录";}
   finally{busy=false;if(window.IsLoaded){C<Button>("RefreshButton").IsEnabled=true;C<Button>("RefreshButton").Content="↻  刷新";UpdateResetButton();}}
@@ -223,6 +244,7 @@ class App {
   var rows=Filtered();long input=rows.Sum(r=>r.Input),cache=rows.Sum(r=>r.Cache),total=rows.Sum(r=>r.Total);
   C<TextBlock>("RequestCount").Text=rows.Count.ToString("N0");C<TextBlock>("CacheRatio").Text=input>0?(100.0*cache/input).ToString("0.0")+"%":"—";C<TextBlock>("TokenTotal").Text=Number(total);C<TextBlock>("TokenTotal").ToolTip=total.ToString("N0")+" tokens";
   C<Button>("TodayButton").Background=Brush(days==1?"#163D5C":"#111B2B");C<Button>("WeekButton").Background=Brush(days==7?"#163D5C":"#111B2B");
+  C<Button>("MonthButton").Background=Brush(days==30?"#163D5C":"#111B2B");
   C<TextBlock>("LocalUpdated").Text="更新 "+DateTime.Now.ToString("HH:mm:ss");var panel=C<StackPanel>("UsageRows");panel.Children.Clear();
   foreach(var row in rows.Take(8)) {
    var g=new Grid{Height=29};foreach(var width in new[]{20.0,-1,80,76})g.ColumnDefinitions.Add(new ColumnDefinition{Width=width<0?new GridLength(1,GridUnitType.Star):new GridLength(width)});
@@ -234,14 +256,25 @@ class App {
   }
   C<TextBlock>("EmptyState").Visibility=rows.Count==0?Visibility.Visible:Visibility.Collapsed;C<TextBlock>("EmptyState").Text=snapshot.Found?"所选时段暂无用量记录。使用 Codex 后会自动更新。":"未找到会话日志。请在设置中选择 Codex 数据目录。";
   C<TextBlock>("LocalNote").Text="仅统计本机已记录用量 · 不等于账户账单"+(snapshot.Unreadable>0?"\n有 "+snapshot.Unreadable+" 个文件或目录暂不可读":"")+(snapshot.Bad>0?"\n已跳过 "+snapshot.Bad+" 条不完整记录":"");
-  var chart=C<Grid>("Chart");chart.Children.Clear();chart.ColumnDefinitions.Clear();int count=days==1?24:7;long[] buckets=new long[count];
-  foreach(var r in rows){int index=days==1?r.Time.Hour:(r.Time.Date-DateTime.Today.AddDays(-6)).Days;if(index>=0&&index<count)buckets[index]+=r.Total;}
+  var chart=C<Grid>("Chart");chart.Children.Clear();chart.ColumnDefinitions.Clear();int count=days==1?24:days;long[] buckets=new long[count];
+  foreach(var r in rows){int index=days==1?r.Time.Hour:(r.Time.Date-DateTime.Today.AddDays(1-days)).Days;if(index>=0&&index<count)buckets[index]+=r.Total;}
   long max=Math.Max(1,buckets.Max());
-  for(int i=0;i<count;i++) {chart.ColumnDefinitions.Add(new ColumnDefinition());var bar=new Border{CornerRadius=new CornerRadius(2),Height=Math.Max(3,45.0*buckets[i]/max),VerticalAlignment=VerticalAlignment.Bottom,Margin=new Thickness(2,0,2,0),Background=Brush(buckets[i]>0?"#4BC9FF":"#1D2D43"),ToolTip=(days==1?i.ToString("00")+":00":DateTime.Today.AddDays(i-6).ToString("MM/dd"))+" · "+buckets[i].ToString("N0")+" tokens"};Grid.SetColumn(bar,i);chart.Children.Add(bar);}
-  C<TextBlock>("ChartTitle").Text=days==1?"今日用量分布":"近 7 天用量分布";C<TextBlock>("ChartStart").Text=days==1?"00:00":DateTime.Today.AddDays(-6).ToString("MM/dd");C<TextBlock>("ChartEnd").Text=days==1?"23:00":DateTime.Today.ToString("MM/dd");
+  for(int i=0;i<count;i++) {chart.ColumnDefinitions.Add(new ColumnDefinition());var bar=new Border{CornerRadius=new CornerRadius(2),Height=Math.Max(3,45.0*buckets[i]/max),VerticalAlignment=VerticalAlignment.Bottom,Margin=new Thickness(2,0,2,0),Background=Brush(buckets[i]>0?"#4BC9FF":"#1D2D43"),ToolTip=(days==1?i.ToString("00")+":00":DateTime.Today.AddDays(i+1-days).ToString("MM/dd"))+" · "+buckets[i].ToString("N0")+" tokens"};Grid.SetColumn(bar,i);chart.Children.Add(bar);}
+  C<TextBlock>("ChartTitle").Text=days==1?"今日用量分布":"近 "+days+" 天用量分布";C<TextBlock>("ChartStart").Text=days==1?"00:00":DateTime.Today.AddDays(1-days).ToString("MM/dd");C<TextBlock>("ChartEnd").Text=days==1?"23:00":DateTime.Today.ToString("MM/dd");
  }
  void RenderQuotas() {
   double scrollOffset=C<ScrollViewer>("UsageScroll").VerticalOffset;
+  var weeklyPanel=C<StackPanel>("WeeklyQuotaPanel");weeklyPanel.Children.Clear();weeklyPanel.Children.Add(BuildWeeklyQuota(weekly));
+  if(weekly.Days.Count>0) {
+   var details=new StackPanel();details.Children.Add(Text("本周期明细（UTC 日期）",12,"#EDF5FF"));
+   details.Children.Add(BuildCreditTable(weekly.Days.Where(d=>d.Date>=weekly.Start.Date).ToList()));
+   var controls=new Grid{Margin=new Thickness(0,12,0,8)};controls.Children.Add(Text("历史记录",12,"#EDF5FF"));
+   var options=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
+   foreach(int range in new[]{7,30}) {int selected=range;var button=new Button{Content="近 "+range+" 天",Padding=new Thickness(9,5,9,5),Margin=new Thickness(4,0,0,0),Background=Brush(historyDays==range?"#163D5C":"#111B2B")};button.Click+=(s,e)=>{historyDays=selected;RenderQuotas();};options.Children.Add(button);}
+   controls.Children.Add(options);details.Children.Add(controls);
+   details.Children.Add(BuildCreditTable(weekly.Days.Where(d=>d.Date<weekly.Start.Date&&d.Date>=weekly.Time.Date.AddDays(1-historyDays)).ToList()));
+   weeklyPanel.Children.Add(new Border{Style=(Style)window.FindResource("Card"),Child=details});
+  }
   var panel=C<StackPanel>("QuotaCards");panel.Children.Clear();bool real=live.Quotas!=null;
   var quotas=real?Json.D(Json.Get(live.Quotas,"rateLimitsByLimitId")):new Dictionary<string,object>();
   if(quotas.Count==0) {object q=real?Json.Get(live.Quotas,"rateLimits"):snapshot.Quota;if(q!=null)quotas["codex"]=q;}
@@ -250,6 +283,7 @@ class App {
    var q=pair.Value;var stack=new StackPanel();string name=Json.S(q,"limitName");if(name=="")name=Json.S(q,"limitId");if(name==""||name=="codex")name="Codex";
    string plan=Json.S(q,"planType");var heading=new Grid();var label=Text(name+(plan==""?"":"  "+CultureInfo.InvariantCulture.TextInfo.ToTitleCase(plan)),14,"#EDF5FF");label.FontWeight=FontWeights.SemiBold;heading.Children.Add(label);stack.Children.Add(heading);
    var stamp=real?live.Time:snapshot.QuotaTime;stack.Children.Add(new TextBlock{Text=(real?"实时同步":"日志快照")+" · "+stamp.ToString("MM/dd HH:mm:ss"),Foreground=Brush(real?"#849DBD":"#FFC178"),FontSize=10,Margin=new Thickness(0,5,0,12)});
+   if(Json.Get(q,"credits")!=null)stack.Children.Add(BuildCreditBalance(Json.Get(q,"credits"),!real));
    bool has=false;foreach(var key in new[]{"primary","secondary"}) {var w=Json.Get(q,key);if(w!=null){stack.Children.Add(QuotaWindow(w));has=true;}}
    if(!has)stack.Children.Add(Text("当前账户未返回额度窗口",12,"#90A5C0"));
    panel.Children.Add(new Border{Style=(Style)window.FindResource("Card"),Child=stack});
@@ -259,6 +293,46 @@ class App {
   C<TextBlock>("StatusText").Foreground=Brush(real?"#4BC9FF":"#FFC178");C<TextBlock>("StatusText").ToolTip=live.Error??"账户额度来自 Codex";
   UpdateResetButton();
   C<ScrollViewer>("UsageScroll").UpdateLayout();C<ScrollViewer>("UsageScroll").ScrollToVerticalOffset(scrollOffset);
+ }
+ internal static Border BuildCreditBalance(object credits,bool historical) {
+  var balance=CreditBalance.Read(credits);var body=new StackPanel();
+  body.Children.Add(Text(historical?"余额折合（USD）· 历史快照":"余额折合（USD）",11,"#6BA5CC"));
+  var amount=Text(balance.Amount,26,"#61D0FF");amount.FontWeight=FontWeights.Bold;amount.TextWrapping=TextWrapping.Wrap;amount.Margin=new Thickness(0,6,0,4);body.Children.Add(amount);
+  body.Children.Add(new TextBlock{Text=balance.Detail,FontSize=10,Foreground=Brush("#849DBD"),TextWrapping=TextWrapping.Wrap});
+  return new Border{Child=body,Background=Brush("#0E2438"),BorderBrush=Brush("#21567B"),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(8),Padding=new Thickness(12),Margin=new Thickness(0,0,0,12),ToolTip="额外 Credits 的美元参考价值，不含套餐内额度；实际可用余额以账户页面为准。"};
+ }
+ internal static StackPanel BuildCreditTable(List<CreditDay> rows) {
+  var table=new StackPanel{Margin=new Thickness(0,8,0,0)};
+  Func<string[],bool,Grid> row=(values,heading)=> {
+   var grid=new Grid{MinHeight=30,Background=Brush(heading?"#142034":"#111B2B")};
+   foreach(double width in new[]{1.15,1.1,0.9,1.05,0.6})grid.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(width,GridUnitType.Star)});
+   for(int i=0;i<values.Length;i++){var text=Text(values[i],10,heading?"#849DBD":i==3?"#35C9A0":"#EAF2FF");text.TextTrimming=TextTrimming.CharacterEllipsis;text.ToolTip=values[i];text.Margin=new Thickness(3);text.TextAlignment=i==0?TextAlignment.Left:TextAlignment.Right;Grid.SetColumn(text,i);grid.Children.Add(text);}return grid;
+  };
+  table.Children.Add(row(new[]{"日期","Credits","Tokens","金额","轮数"},true));
+  var items=new StackPanel();
+  foreach(var day in rows.OrderByDescending(d=>d.Date))items.Children.Add(row(new[]{day.Date.ToString("MM-dd"),day.Credits.ToString("0.###",CultureInfo.InvariantCulture),day.Tokens.HasValue?(day.Tokens.Value/1000000m).ToString("0.00",CultureInfo.InvariantCulture)+"M":"—","$"+(day.Credits/25m).ToString("0.00",CultureInfo.InvariantCulture),day.Turns.HasValue?day.Turns.Value.ToString("0",CultureInfo.InvariantCulture):"—"},false));
+  if(rows.Count==0)items.Children.Add(Text("所选时段暂无历史记录",11,"#849DBD"));
+  table.Children.Add(new ScrollViewer{Content=items,MaxHeight=160,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled});
+  if(rows.Count>0)table.Children.Add(row(new[]{"合计",rows.Sum(d=>d.Credits).ToString("0.###",CultureInfo.InvariantCulture),rows.All(d=>d.Tokens.HasValue)?(rows.Sum(d=>d.Tokens.Value)/1000000m).ToString("0.00",CultureInfo.InvariantCulture)+"M":"—","$"+(rows.Sum(d=>d.Credits)/25m).ToString("0.00",CultureInfo.InvariantCulture),rows.All(d=>d.Turns.HasValue)?rows.Sum(d=>d.Turns.Value).ToString("0",CultureInfo.InvariantCulture):"—"},true));
+  return table;
+ }
+ internal static Border BuildWeeklyQuota(WeeklyQuota data) {
+  var body=new StackPanel();var title=Text("配额深度分析",14,"#EDF5FF");title.FontWeight=FontWeights.SemiBold;body.Children.Add(title);
+  var cards=new System.Windows.Controls.Primitives.UniformGrid{Columns=4,Margin=new Thickness(-3,12,-3,10)};
+  string[] labels={"已用比例","本周已用","推算总额","周价值（估算）"};
+  string[] values={data.UsedPercent.HasValue?data.UsedPercent.Value.ToString("0.#",CultureInfo.InvariantCulture)+"%":"—",data.UsedCredits.HasValue?data.UsedCredits.Value.ToString("0.0",CultureInfo.InvariantCulture):"—",data.TotalCredits.HasValue?data.TotalCredits.Value.ToString("0.0",CultureInfo.InvariantCulture):"—",data.Dollars.HasValue?"$ "+data.Dollars.Value.ToString("0.00",CultureInfo.InvariantCulture):"—"};
+  for(int i=0;i<4;i++) {
+   var content=new StackPanel();content.Children.Add(Text(labels[i],10,"#849DBD"));
+   var value=Text(values[i],18,"#35C9A0");value.FontWeight=FontWeights.SemiBold;
+   var fit=new Viewbox{Stretch=Stretch.Uniform,StretchDirection=StretchDirection.DownOnly,HorizontalAlignment=HorizontalAlignment.Left,Height=27,Margin=new Thickness(0,5,0,0),Child=value};content.Children.Add(fit);
+   content.Children.Add(Text(i==1||i==2?"Credits":i==3?"USD":"本周",9,"#849DBD"));
+   cards.Children.Add(new Border{Child=content,Padding=new Thickness(10,12,10,12),Margin=new Thickness(3),CornerRadius=new CornerRadius(7),Background=Brush(i==2?"#10352F":"#0D1625"),BorderBrush=Brush(i==2?"#226653":"#23334A"),BorderThickness=new Thickness(1)});
+  }
+  cards.SizeChanged+=(s,e)=>cards.Columns=cards.ActualWidth<560?2:4;
+  body.Children.Add(cards);
+  string period=data.Start==default(DateTime)?"":"周期 "+data.Start.ToLocalTime().ToString("MM/dd HH:mm")+" – "+data.End.ToLocalTime().ToString("MM/dd HH:mm")+" · 更新 "+data.Time.ToLocalTime().ToString("HH:mm:ss")+"\n";
+  body.Children.Add(new TextBlock{Text=period+data.Note,FontSize=10,Foreground=Brush("#849DBD"),TextWrapping=TextWrapping.Wrap});
+  return new Border{Child=body,Padding=new Thickness(15),CornerRadius=new CornerRadius(10),Margin=new Thickness(0,0,0,14),Background=Brush("#111B2B"),BorderBrush=Brush("#23334A"),BorderThickness=new Thickness(1)};
  }
  void UpdateThemeButton() {
   C<Button>("ThemeButton").Content=Theme.IsLight?"深色":"浅色";
@@ -308,7 +382,10 @@ class App {
   }catch {
    message=reset.Pending!=null?"重置结果暂未确认。请点击“重试重置”，程序会沿用原请求标识，避免重复扣除。":"无法完成重置，请检查网络和本地文件权限后重试。";
    }
-   if(attempted&&window.IsLoaded)live=await account.Read(settings);
+   if(attempted&&window.IsLoaded) {
+    live=await account.Read(settings);
+    weekly=!settings.AccountCredits?new WeeklyQuota{Note="账户 Credits 查询未开启"}:live.Quotas==null?new WeeklyQuota{Note="重置后用量暂未同步，请刷新"}:await WeeklyQuotaClient.Read(settings.CodexHome,Json.S(live.Quotas,"accountId"));
+   }
   }finally {
    resetting=false;
    if(window.IsLoaded) {
@@ -341,11 +418,24 @@ class App {
  }
  static string Csv(string value) {if(value.Length>0&&"=+-@".Contains(value[0]))value="'"+value;return "\""+value.Replace("\"","\"\"")+"\"";}
  void ShowSettings() {
-  var menu=new ContextMenu();var auto=new MenuItem{Header="每 60 秒自动刷新",IsCheckable=true,IsChecked=settings.AutoRefresh};auto.Click+=(s,e)=>{settings.AutoRefresh=auto.IsChecked;settings.Save();RenderQuotas();};menu.Items.Add(auto);
+  var menu=new ContextMenu{Style=(Style)window.FindResource("SettingsMenuStyle"),ItemContainerStyle=(Style)window.FindResource("SettingsMenuItemStyle")};
+  // A ContextMenu lives in a separate popup tree; explicitly share the palette and templates.
+  menu.Resources.MergedDictionaries.Add(window.Resources);
+  var auto=new MenuItem{Header="每 60 秒自动刷新",IsCheckable=true,IsChecked=settings.AutoRefresh};auto.Click+=(s,e)=>{settings.AutoRefresh=auto.IsChecked;settings.Save();RenderQuotas();};menu.Items.Add(auto);
+  var credits=new MenuItem{Header="账户 Credits 查询（联网）",IsCheckable=true,IsChecked=settings.AccountCredits,IsEnabled=!busy&&!resetting};
+  credits.Click+=async(s,e)=> {
+   if(credits.IsChecked&&MessageBox.Show(window,"读取账户 Credits 明细需要使用当前 Codex 数据目录 auth.json 中的登录令牌与账户标识，发送到 https://chatgpt.com/backend-api/wham/ 的只读用量接口。\n\n令牌仅在内存使用，不保存、不输出，也不发送到第三方。开启后随刷新查询；你可以随时在设置中关闭。\n\n允许开启？","账户 Credits 查询",MessageBoxButton.YesNo,MessageBoxImage.Question,MessageBoxResult.No)!=MessageBoxResult.Yes){credits.IsChecked=false;return;}
+   settings.AccountCredits=credits.IsChecked;settings.Save();weekly=new WeeklyQuota{Note=settings.AccountCredits?"正在读取账户 Credits…":"账户 Credits 查询未开启"};RenderQuotas();await Refresh();
+  };menu.Items.Add(credits);
   var theme=new MenuItem{Header=Theme.IsLight?"切换为深色主题":"切换为浅色主题"};theme.Click+=(s,e)=>ToggleTheme();menu.Items.Add(theme);
+  menu.Items.Add(new Separator{Style=(Style)window.FindResource("MenuDivider")});
   var folder=new MenuItem{Header="选择 Codex 数据目录…",IsEnabled=!busy&&!resetting};folder.Click+=async(s,e)=>{using(var d=new Forms.FolderBrowserDialog{Description="选择包含 sessions 的 .codex 目录",SelectedPath=settings.CodexHome}){if(d.ShowDialog()==Forms.DialogResult.OK){settings.CodexHome=d.SelectedPath;settings.Save();logs=new LogReader();await Refresh();}}};menu.Items.Add(folder);
   var exe=new MenuItem{Header="指定 codex.exe…",IsEnabled=!busy&&!resetting};exe.Click+=async(s,e)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex 程序|codex.exe"};if(d.ShowDialog(window)==true){settings.Executable=d.FileName;settings.Save();await Refresh();}};menu.Items.Add(exe);
-  var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.2\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);menu.PlacementTarget=C<Button>("SettingsButton");menu.IsOpen=true;
+  menu.Items.Add(new Separator{Style=(Style)window.FindResource("MenuDivider")});
+  var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.3.0\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
+  menu.PlacementTarget=C<Button>("SettingsButton");menu.Placement=System.Windows.Controls.Primitives.PlacementMode.Custom;
+  menu.CustomPopupPlacementCallback=(popup,target,offset)=>new[]{new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,-popup.Height-8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal),new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,target.Height+8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal)};
+  menu.IsOpen=true;
  }
  static void Diagnose() {
   var settings=Settings.Load();var logs=new LogReader().Read(settings.CodexHome,DateTime.Today.AddDays(-6));AccountResult live;using(var a=new AccountClient())live=a.Read(settings).GetAwaiter().GetResult();

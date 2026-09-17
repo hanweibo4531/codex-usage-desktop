@@ -29,3 +29,20 @@ jobs:
         with:
           name: CodexUsage-Windows
           path: CodexUsage-Windows.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: CodexUsage-Windows
+      - name: Publish portable Windows package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" CodexUsage-Windows.zip --verify-tag --title "Codex Usage Desktop $RELEASE_TAG" --notes-file .github/release-notes.md
