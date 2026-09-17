@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.3
+
+- Applied the slim scrollbar style to the account history table's inner scroll area, replacing the default system scrollbar.
+
 ## 1.5.2
 
 - Replaced the account history range buttons with a dropdown matching the model selector styling.

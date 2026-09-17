@@ -96,11 +96,12 @@ static class FeatureTests {
     var weeklyCard=App.BuildWeeklyQuota(week);weeklyCard.Measure(new Size(width,double.PositiveInfinity));weeklyCard.Arrange(new Rect(0,0,width,weeklyCard.DesiredSize.Height));weeklyCard.UpdateLayout();
     Check(weeklyCard.ActualWidth==width,"weekly card width");
    }
-   var table=App.BuildCreditTable(week.Days);Check(table.Children.Count==3,"monthly table has header, scroll area and totals");
-   // Exercise the actual local filter and chart at the 30-day boundary without network access.
-   var instance=new App();var flags=BindingFlags.Instance|BindingFlags.NonPublic;
-   typeof(App).GetField("window",flags).SetValue(instance,window);
-   typeof(App).GetField("days",flags).SetValue(instance,30);
+    // Exercise the actual local filter and chart at the 30-day boundary without network access.
+    var instance=new App();var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+    typeof(App).GetField("window",flags).SetValue(instance,window);
+    var table=instance.BuildCreditTable(week.Days);Check(table.Children.Count==3,"monthly table has header, scroll area and totals");
+    Check(((ScrollViewer)table.Children[1]).Style==(Style)window.FindResource("SlimScrollViewer"),"history table uses slim scrollbar");
+    typeof(App).GetField("days",flags).SetValue(instance,30);
    var local=new Snapshot();local.Rows.Add(new Usage{Time=DateTime.Today.AddDays(-29),Model="test",Total=10});local.Rows.Add(new Usage{Time=DateTime.Today.AddDays(-30),Model="test",Total=90});
    typeof(App).GetField("snapshot",flags).SetValue(instance,local);
    typeof(App).GetMethod("RenderLocal",flags).Invoke(instance,null);

@@ -20,8 +20,8 @@ using Forms = System.Windows.Forms;
 
 [assembly: AssemblyTitle("Codex Usage Desktop")]
 [assembly: AssemblyDescription("Codex quota and token usage monitor")]
-[assembly: AssemblyVersion("1.5.2.0")]
-[assembly: AssemblyFileVersion("1.5.2.0")]
+[assembly: AssemblyVersion("1.5.3.0")]
+[assembly: AssemblyFileVersion("1.5.3.0")]
 
 namespace CodexUsage {
 static class Json {
@@ -144,7 +144,7 @@ class AccountClient : IDisposable {
     process.ErrorDataReceived+=(s,e)=>{};
     process.Exited+=(s,e)=>{lock(gate){foreach(var t in pending.Values)t.TrySetException(new IOException("Codex 服务已退出"));}};
     process.Start();process.BeginOutputReadLine();process.BeginErrorReadLine();
-     await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.5.2"}});
+     await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.5.3"}});
     process.StandardInput.WriteLine("{\"method\":\"initialized\"}");process.StandardInput.Flush();
    }
    var result=await Call("account/rateLimits/read",null);
@@ -302,7 +302,7 @@ class App {
   UpdateResetButton();
    C<ScrollViewer>("QuotaScroll").UpdateLayout();C<ScrollViewer>("QuotaScroll").ScrollToVerticalOffset(scrollOffset);
  }
- internal static StackPanel BuildCreditTable(List<CreditDay> rows) {
+  internal StackPanel BuildCreditTable(List<CreditDay> rows) {
   var table=new StackPanel{Margin=new Thickness(0,8,0,0)};
   Func<string[],bool,Grid> row=(values,heading)=> {
    var grid=new Grid{MinHeight=30,Background=Brush(heading?"#142034":"#111B2B")};
@@ -313,7 +313,7 @@ class App {
   var items=new StackPanel();
   foreach(var day in rows.OrderByDescending(d=>d.Date))items.Children.Add(row(new[]{day.Date.ToString("MM-dd"),day.Credits.ToString("0.###",CultureInfo.InvariantCulture),day.Tokens.HasValue?(day.Tokens.Value/1000000m).ToString("0.00",CultureInfo.InvariantCulture)+"M":"—","$"+(day.Credits/25m).ToString("0.00",CultureInfo.InvariantCulture),day.Turns.HasValue?day.Turns.Value.ToString("0",CultureInfo.InvariantCulture):"—"},false));
   if(rows.Count==0)items.Children.Add(Text("所选时段暂无历史记录",11,"#849DBD"));
-  table.Children.Add(new ScrollViewer{Content=items,MaxHeight=160,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled});
+   table.Children.Add(new ScrollViewer{Style=(Style)window.FindResource("SlimScrollViewer"),Content=items,MaxHeight=160,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled});
   if(rows.Count>0)table.Children.Add(row(new[]{"合计",rows.Sum(d=>d.Credits).ToString("0.###",CultureInfo.InvariantCulture),rows.All(d=>d.Tokens.HasValue)?(rows.Sum(d=>d.Tokens.Value)/1000000m).ToString("0.00",CultureInfo.InvariantCulture)+"M":"—","$"+(rows.Sum(d=>d.Credits)/25m).ToString("0.00",CultureInfo.InvariantCulture),rows.All(d=>d.Turns.HasValue)?rows.Sum(d=>d.Turns.Value).ToString("0",CultureInfo.InvariantCulture):"—"},true));
   return table;
  }
@@ -441,7 +441,7 @@ class App {
   var folder=new MenuItem{Header="选择 Codex 数据目录…",IsEnabled=!busy&&!resetting};folder.Click+=async(s,e)=>{using(var d=new Forms.FolderBrowserDialog{Description="选择包含 sessions 的 .codex 目录",SelectedPath=settings.CodexHome}){if(d.ShowDialog()==Forms.DialogResult.OK){settings.CodexHome=d.SelectedPath;settings.Save();logs=new LogReader();await Refresh();}}};menu.Items.Add(folder);
   var exe=new MenuItem{Header="指定 codex.exe…",IsEnabled=!busy&&!resetting};exe.Click+=async(s,e)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex 程序|codex.exe"};if(d.ShowDialog(window)==true){settings.Executable=d.FileName;settings.Save();await Refresh();}};menu.Items.Add(exe);
   menu.Items.Add(new Separator{Style=(Style)window.FindResource("MenuDivider")});
-   var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.5.2\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
+   var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.5.3\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
   menu.PlacementTarget=C<Button>("SettingsButton");menu.Placement=System.Windows.Controls.Primitives.PlacementMode.Custom;
   menu.CustomPopupPlacementCallback=(popup,target,offset)=>new[]{new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,-popup.Height-8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal),new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,target.Height+8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal)};
   menu.IsOpen=true;
