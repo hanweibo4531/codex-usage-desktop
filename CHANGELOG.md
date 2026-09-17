@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.0
+
+- Split the dashboard into Account and Local usage modules with a segmented tab switcher under the title bar.
+- Focused the account tab on live quota cards, USD balance, quota analysis, account history and reset actions.
+- Moved the scheduled-request summary to the bottom of the account tab; the local tab keeps metrics, chart, records and CSV export.
+- Refreshed tab styling in both light and dark themes and added module-switch regression checks.
+
 ## 1.4.0
 
 - Added configurable daily lightweight Codex requests with presets for 05:00 and 05:00/10:00/15:00.

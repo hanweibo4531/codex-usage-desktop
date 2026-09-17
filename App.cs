@@ -20,8 +20,8 @@ using Forms = System.Windows.Forms;
 
 [assembly: AssemblyTitle("Codex Usage Desktop")]
 [assembly: AssemblyDescription("Codex quota and token usage monitor")]
-[assembly: AssemblyVersion("1.4.0.0")]
-[assembly: AssemblyFileVersion("1.4.0.0")]
+[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyFileVersion("1.5.0.0")]
 
 namespace CodexUsage {
 static class Json {
@@ -160,7 +160,7 @@ class AccountClient : IDisposable {
     process.ErrorDataReceived+=(s,e)=>{};
     process.Exited+=(s,e)=>{lock(gate){foreach(var t in pending.Values)t.TrySetException(new IOException("Codex 服务已退出"));}};
     process.Start();process.BeginOutputReadLine();process.BeginErrorReadLine();
-    await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.4.0"}});
+     await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.5.0"}});
     process.StandardInput.WriteLine("{\"method\":\"initialized\"}");process.StandardInput.Flush();
    }
    var result=await Call("account/rateLimits/read",null);
@@ -174,7 +174,7 @@ class AccountClient : IDisposable {
 }
 class App {
  Window window; Settings settings; AccountClient account=new AccountClient(); LogReader logs=new LogReader(); Snapshot snapshot=new Snapshot(); AccountResult live=new AccountResult();
- DispatcherTimer timer; Forms.NotifyIcon tray; bool busy,updatingFilter,resetting; int days=1;
+  DispatcherTimer timer; Forms.NotifyIcon tray; bool busy,updatingFilter,resetting; int days=1; string module="quota";
  ResetCoordinator reset; string resetStorageError;
  WeeklyQuota weekly=new WeeklyQuota(); int historyDays=30;
  DispatcherTimer scheduleTimer;bool scheduleBusy;
@@ -203,7 +203,8 @@ class App {
   catch {resetStorageError="无法读取未完成的重置记录。为避免重复消耗，请保留 pending-reset.json 并检查文件权限。";}
   window.MaxHeight=SystemParameters.WorkArea.Height;window.Height=Math.Min(830,SystemParameters.WorkArea.Height-30);
   C<Grid>("TitleBar").MouseLeftButtonDown+=(s,e)=>{if(e.OriginalSource is TextBlock||e.OriginalSource==s)try{window.DragMove();}catch{}};
-  C<Button>("CloseButton").Click+=(s,e)=>window.Close();C<Button>("HideButton").Click+=(s,e)=>window.Hide();
+   C<Button>("TabQuotaButton").Click+=(s,e)=>SwitchModule("quota");C<Button>("TabLocalButton").Click+=(s,e)=>SwitchModule("local");SwitchModule("quota");
+   C<Button>("CloseButton").Click+=(s,e)=>window.Close();C<Button>("HideButton").Click+=(s,e)=>window.Hide();
   C<Button>("PinButton").Click+=(s,e)=>{window.Topmost=!window.Topmost;C<Button>("PinButton").Content=window.Topmost?"已置顶":"置顶";};
   C<Button>("RefreshButton").Click+=async(s,e)=>await Refresh();
   C<Button>("ResetButton").Click+=async(s,e)=>await ResetQuota();
@@ -286,7 +287,7 @@ class App {
   C<TextBlock>("ChartTitle").Text=days==1?"今日用量分布":"近 "+days+" 天用量分布";C<TextBlock>("ChartStart").Text=days==1?"00:00":DateTime.Today.AddDays(1-days).ToString("MM/dd");C<TextBlock>("ChartEnd").Text=days==1?"23:00":DateTime.Today.ToString("MM/dd");
  }
  void RenderQuotas() {
-  double scrollOffset=C<ScrollViewer>("UsageScroll").VerticalOffset;
+   double scrollOffset=C<ScrollViewer>("QuotaScroll").VerticalOffset;
   var weeklyPanel=C<StackPanel>("WeeklyQuotaPanel");weeklyPanel.Children.Clear();weeklyPanel.Children.Add(BuildWeeklyQuota(weekly));
   if(weekly.Days.Count>0) {
    var details=new StackPanel();details.Children.Add(Text("本周期明细（UTC 日期）",12,"#EDF5FF"));
@@ -315,7 +316,7 @@ class App {
   C<TextBlock>("StatusText").Text=real?"●  已连接 · "+(settings.AutoRefresh?"每 60 秒刷新":"自动刷新已暂停"):"●  "+(snapshot.Quota!=null?"本机快照 · 实时额度未连接":"等待额度连接");
   C<TextBlock>("StatusText").Foreground=Brush(real?"#4BC9FF":"#FFC178");C<TextBlock>("StatusText").ToolTip=live.Error??"账户额度来自 Codex";
   UpdateResetButton();
-  C<ScrollViewer>("UsageScroll").UpdateLayout();C<ScrollViewer>("UsageScroll").ScrollToVerticalOffset(scrollOffset);
+   C<ScrollViewer>("QuotaScroll").UpdateLayout();C<ScrollViewer>("QuotaScroll").ScrollToVerticalOffset(scrollOffset);
  }
  internal static Border BuildCreditBalance(object credits,bool historical) {
   var balance=CreditBalance.Read(credits);var body=new StackPanel();
@@ -357,13 +358,20 @@ class App {
   body.Children.Add(new TextBlock{Text=period+data.Note,FontSize=10,Foreground=Brush("#849DBD"),TextWrapping=TextWrapping.Wrap});
   return new Border{Child=body,Padding=new Thickness(15),CornerRadius=new CornerRadius(10),Margin=new Thickness(0,0,0,14),Background=Brush("#111B2B"),BorderBrush=Brush("#23334A"),BorderThickness=new Thickness(1)};
  }
- void UpdateThemeButton() {
+  void SwitchModule(string name) {
+   module=name;bool quota=name=="quota";
+   C<Button>("TabQuotaButton").Background=Brush(quota?"#163D5C":"#0D1625");C<Button>("TabQuotaButton").Foreground=Brush(quota?"#BCEAFF":"#9BAEC8");
+   C<Button>("TabLocalButton").Background=Brush(quota?"#0D1625":"#163D5C");C<Button>("TabLocalButton").Foreground=Brush(quota?"#9BAEC8":"#BCEAFF");
+   C<ScrollViewer>("QuotaScroll").Visibility=quota?Visibility.Visible:Visibility.Collapsed;
+   C<ScrollViewer>("LocalScroll").Visibility=quota?Visibility.Collapsed:Visibility.Visible;
+  }
+  void UpdateThemeButton() {
   C<Button>("ThemeButton").Content=Theme.IsLight?"深色":"浅色";
   C<Button>("ThemeButton").ToolTip=Theme.IsLight?"切换为深色主题":"切换为浅色主题";
  }
  void ToggleTheme() {
   settings.Theme=Theme.IsLight?"dark":"light";Theme.Apply(window,settings.Theme);
-  UpdateThemeButton();RenderLocal();RenderQuotas();
+   UpdateThemeButton();SwitchModule(module);RenderLocal();RenderQuotas();
   try {settings.Save();}catch{MessageBox.Show(window,"主题已切换，但设置暂时无法保存。请检查本地文件权限。","保存设置失败");}
  }
  void UpdateResetButton() {
@@ -456,7 +464,7 @@ class App {
   var folder=new MenuItem{Header="选择 Codex 数据目录…",IsEnabled=!busy&&!resetting};folder.Click+=async(s,e)=>{using(var d=new Forms.FolderBrowserDialog{Description="选择包含 sessions 的 .codex 目录",SelectedPath=settings.CodexHome}){if(d.ShowDialog()==Forms.DialogResult.OK){settings.CodexHome=d.SelectedPath;settings.Save();logs=new LogReader();await Refresh();}}};menu.Items.Add(folder);
   var exe=new MenuItem{Header="指定 codex.exe…",IsEnabled=!busy&&!resetting};exe.Click+=async(s,e)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex 程序|codex.exe"};if(d.ShowDialog(window)==true){settings.Executable=d.FileName;settings.Save();await Refresh();}};menu.Items.Add(exe);
   menu.Items.Add(new Separator{Style=(Style)window.FindResource("MenuDivider")});
-  var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.4.0\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
+   var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.5.0\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
   menu.PlacementTarget=C<Button>("SettingsButton");menu.Placement=System.Windows.Controls.Primitives.PlacementMode.Custom;
   menu.CustomPopupPlacementCallback=(popup,target,offset)=>new[]{new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,-popup.Height-8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal),new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,target.Height+8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal)};
   menu.IsOpen=true;

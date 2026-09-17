@@ -115,8 +115,14 @@ static class FeatureTests {
    var local=new Snapshot();local.Rows.Add(new Usage{Time=DateTime.Today.AddDays(-29),Model="test",Total=10});local.Rows.Add(new Usage{Time=DateTime.Today.AddDays(-30),Model="test",Total=90});
    typeof(App).GetField("snapshot",flags).SetValue(instance,local);
    typeof(App).GetMethod("RenderLocal",flags).Invoke(instance,null);
-   Check(((TextBlock)window.FindName("TokenTotal")).Text=="10"&&((Grid)window.FindName("Chart")).ColumnDefinitions.Count==30,"month filter and 30 chart buckets");
-   output.AppendLine("PASS monthly local filter, daily chart and account history table");
+    Check(((TextBlock)window.FindName("TokenTotal")).Text=="10"&&((Grid)window.FindName("Chart")).ColumnDefinitions.Count==30,"month filter and 30 chart buckets");
+    output.AppendLine("PASS monthly local filter, daily chart and account history table");
+    Check(window.FindName("TabQuotaButton")!=null&&window.FindName("TabLocalButton")!=null&&window.FindName("QuotaScroll")!=null&&window.FindName("LocalScroll")!=null,"module tabs and pages exist");
+    typeof(App).GetMethod("SwitchModule",flags).Invoke(instance,new object[]{"local"});
+    Check(((ScrollViewer)window.FindName("QuotaScroll")).Visibility==Visibility.Collapsed&&((ScrollViewer)window.FindName("LocalScroll")).Visibility==Visibility.Visible,"local module shown");
+    typeof(App).GetMethod("SwitchModule",flags).Invoke(instance,new object[]{"quota"});
+    Check(((ScrollViewer)window.FindName("QuotaScroll")).Visibility==Visibility.Visible&&((ScrollViewer)window.FindName("LocalScroll")).Visibility==Visibility.Collapsed,"quota module restored");
+    output.AppendLine("PASS tabbed modules switch account and local views");
    foreach(string theme in new[]{"dark","light"}) {
     Theme.Apply(window,theme);
     var card=App.BuildCreditBalance(historicalCredits,true);var body=(StackPanel)card.Child;
