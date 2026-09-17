@@ -127,7 +127,8 @@ static class FeatureTests {
     Theme.Apply(window,theme);var dialog=ScheduleDialog.Build(window,new RequestSchedule(),()=>{});
     var content=(StackPanel)dialog.Content;content.Measure(new Size(422,double.PositiveInfinity));
     Check(content.DesiredSize.Height<760,"schedule dialog fits common display height");
-    Check(content.Children.OfType<TextBox>().Count()==2&&content.Children.OfType<CheckBox>().Count()==2,"schedule times/model and enable/wake controls");
+     Check(content.Children.OfType<TextBox>().Count()==2&&content.Children.OfType<CheckBox>().Count()==2,"schedule times/model and enable/wake controls");
+     Check(dialog.TryFindResource(typeof(TextBox))!=null&&dialog.TryFindResource(typeof(CheckBox))!=null,"schedule inputs use themed styles");
     dialog.Close();
    }
    output.AppendLine("PASS schedule settings controls and both theme layouts");

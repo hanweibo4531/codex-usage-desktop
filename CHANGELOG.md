@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0
+
+- Added an opt-in autostart setting stored in the current user's registry Run key.
+- Added tray balloon warnings when a live quota window drops to 10% or below, re-armed after usage recovers.
+- Added a read-only startup check against GitHub Releases with a balloon prompt and a settings entry opening the release page.
+- Restyled schedule dialog inputs and checkboxes with rounded, theme-aware templates shared from the main window.
+- Added regression checks for update-tag comparison, low-quota transitions, autostart round-trip and themed dialog inputs.
+
 ## 1.5.3
 
 - Applied the slim scrollbar style to the account history table's inner scroll area, replacing the default system scrollbar.

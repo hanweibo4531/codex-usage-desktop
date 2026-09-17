@@ -20,8 +20,8 @@ using Forms = System.Windows.Forms;
 
 [assembly: AssemblyTitle("Codex Usage Desktop")]
 [assembly: AssemblyDescription("Codex quota and token usage monitor")]
-[assembly: AssemblyVersion("1.5.3.0")]
-[assembly: AssemblyFileVersion("1.5.3.0")]
+[assembly: AssemblyVersion("1.6.0.0")]
+[assembly: AssemblyFileVersion("1.6.0.0")]
 
 namespace CodexUsage {
 static class Json {
@@ -144,7 +144,7 @@ class AccountClient : IDisposable {
     process.ErrorDataReceived+=(s,e)=>{};
     process.Exited+=(s,e)=>{lock(gate){foreach(var t in pending.Values)t.TrySetException(new IOException("Codex 服务已退出"));}};
     process.Start();process.BeginOutputReadLine();process.BeginErrorReadLine();
-     await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.5.3"}});
+     await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.6.0"}});
     process.StandardInput.WriteLine("{\"method\":\"initialized\"}");process.StandardInput.Flush();
    }
    var result=await Call("account/rateLimits/read",null);
@@ -162,10 +162,17 @@ class App {
  ResetCoordinator reset; string resetStorageError;
  WeeklyQuota weekly=new WeeklyQuota(); int historyDays=30;
  DispatcherTimer scheduleTimer;bool scheduleBusy;
+ Dictionary<string,double> lowQuota=new Dictionary<string,double>();string latestVersion,balloonUrl;
+ const string UpdateUrl="https://api.github.com/repos/hanweibo4531/codex-usage-desktop/releases/latest",ReleaseUrl="https://github.com/hanweibo4531/codex-usage-desktop/releases/latest";
  T C<T>(string name) where T:FrameworkElement {return (T)window.FindName(name);}
  static SolidColorBrush Brush(string color) {return (SolidColorBrush)new BrushConverter().ConvertFromString(Theme.Resolve(color));}
  static TextBlock Text(string value,double size,string color) {return new TextBlock{Text=value,FontSize=size,Foreground=Brush(color),VerticalAlignment=VerticalAlignment.Center};}
  static string Number(long n) {return n>=100000000?(n/100000000.0).ToString("0.0")+" 亿":n>=10000?(n/10000.0).ToString("0.0")+" 万":n.ToString("N0");}
+ internal static bool IsNewer(string tag,Version local) {if(string.IsNullOrEmpty(tag)||tag[0]!='v')return false;Version remote;return Version.TryParse(tag.Substring(1),out remote)&&remote>local;}
+ internal static bool LowQuotaCrossed(bool known,double previous,double remaining) {return remaining<=10&&(!known||previous>10);}
+ internal static string AutoStartKey="Software\\Microsoft\\Windows\\CurrentVersion\\Run",AutoStartName="CodexUsage";
+ internal static bool AutoStartEnabled() {try{using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(AutoStartKey))return key!=null&&(key.GetValue(AutoStartName) as string)!=null;}catch{return false;}}
+ internal static void SetAutoStart(bool enable) {using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(AutoStartKey)){if(enable)key.SetValue(AutoStartName,"\""+Process.GetCurrentProcess().MainModule.FileName+"\"");else if(key.GetValue(AutoStartName)!=null)key.DeleteValue(AutoStartName,false);}}
  [STAThread] public static void Main(string[] args) {
   if(args.Contains("--self-test")){Tests.Run();return;}
   if(args.Contains("--diagnose")){Diagnose();return;}
@@ -198,12 +205,13 @@ class App {
   C<ComboBox>("ModelFilter").SelectionChanged+=(s,e)=>{if(!updatingFilter)RenderLocal();};
   C<Button>("ExportButton").Click+=(s,e)=>Export();C<Button>("SettingsButton").Click+=(s,e)=>ShowSettings();
   C<Button>("ScheduleButton").Click+=(s,e)=>ShowSchedule();
-  tray=new Forms.NotifyIcon{Text="Codex 用量",Icon=MakeIcon(),Visible=true};tray.MouseClick+=(s,e)=>{if(e.Button==Forms.MouseButtons.Left)ShowWindow();};
+   tray=new Forms.NotifyIcon{Text="Codex 用量",Icon=MakeIcon(),Visible=true};tray.MouseClick+=(s,e)=>{if(e.Button==Forms.MouseButtons.Left)ShowWindow();};
+   tray.BalloonTipClicked+=(s,e)=>{if(balloonUrl!=null)try{Process.Start(new ProcessStartInfo{FileName=balloonUrl,UseShellExecute=true});}catch{}};
   var menu=new Forms.ContextMenuStrip();menu.Items.Add("打开用量面板",null,(s,e)=>ShowWindow());menu.Items.Add("立即刷新",null,async(s,e)=>await Refresh());menu.Items.Add("退出",null,(s,e)=>window.Close());tray.ContextMenuStrip=menu;
   timer=new DispatcherTimer{Interval=TimeSpan.FromSeconds(60)};timer.Tick+=async(s,e)=>{if(settings.AutoRefresh)await Refresh();};timer.Start();
   scheduleTimer=new DispatcherTimer{Interval=TimeSpan.FromSeconds(15)};scheduleTimer.Tick+=async(s,e)=>await TickSchedule();scheduleTimer.Start();UpdateScheduleStatus();
   window.Closed+=(s,e)=>{timer.Stop();scheduleTimer.Stop();tray.Visible=false;tray.Icon.Dispose();tray.Dispose();account.Dispose();};
-  window.Loaded+=async(s,e)=>await Refresh();RenderQuotas();
+   window.Loaded+=async(s,e)=>{await Refresh();await CheckUpdate();};RenderQuotas();
  }
  static System.Drawing.Icon MakeIcon() {
   using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("app.ico"))
@@ -292,7 +300,7 @@ class App {
    var q=pair.Value;var stack=new StackPanel();string name=Json.S(q,"limitName");if(name=="")name=Json.S(q,"limitId");if(name==""||name=="codex")name="Codex";
    string plan=Json.S(q,"planType");var heading=new Grid();var label=Text(name+(plan==""?"":"  "+CultureInfo.InvariantCulture.TextInfo.ToTitleCase(plan)),14,"#EDF5FF");label.FontWeight=FontWeights.SemiBold;heading.Children.Add(label);stack.Children.Add(heading);
     var stamp=real?live.Time:snapshot.QuotaTime;stack.Children.Add(new TextBlock{Text=(real?"实时同步":"日志快照")+" · "+stamp.ToString("MM/dd HH:mm:ss"),Foreground=Brush(real?"#849DBD":"#FFC178"),FontSize=10,Margin=new Thickness(0,5,0,12)});
-    bool has=false;foreach(var key in new[]{"primary","secondary"}) {var w=Json.Get(q,key);if(w!=null){stack.Children.Add(QuotaWindow(w));has=true;}}
+    bool has=false;foreach(var key in new[]{"primary","secondary"}) {var w=Json.Get(q,key);if(w!=null){stack.Children.Add(QuotaWindow(w));has=true;if(real)NotifyLowQuota(name+" · "+WindowLabel(Json.N(w,"windowDurationMins")),w);}}
    if(!has)stack.Children.Add(Text("当前账户未返回额度窗口",12,"#90A5C0"));
    panel.Children.Add(new Border{Style=(Style)window.FindResource("Card"),Child=stack});
   }
@@ -335,6 +343,25 @@ class App {
   body.Children.Add(new TextBlock{Text=period+data.Note,FontSize=10,Foreground=Brush("#849DBD"),TextWrapping=TextWrapping.Wrap});
   return new Border{Child=body,Padding=new Thickness(15),CornerRadius=new CornerRadius(10),Margin=new Thickness(0,0,0,14),Background=Brush("#111B2B"),BorderBrush=Brush("#23334A"),BorderThickness=new Thickness(1)};
  }
+  static string WindowLabel(double minutes) {return minutes>=1440?(minutes/1440).ToString("0.#",CultureInfo.InvariantCulture)+" 天额度":minutes>=60?(minutes/60).ToString("0.#",CultureInfo.InvariantCulture)+" 小时额度":minutes>0?minutes.ToString("0.#",CultureInfo.InvariantCulture)+" 分钟额度":"额度窗口";}
+  void NotifyLowQuota(string title,object w) {
+   if(tray==null||Json.Get(w,"usedPercent")==null)return;
+   double remaining=Math.Max(0,Math.Min(100,100-Json.N(w,"usedPercent")));double previous;bool known=lowQuota.TryGetValue(title,out previous);
+   if(LowQuotaCrossed(known,previous,remaining)){balloonUrl=null;tray.ShowBalloonTip(8000,"Codex 额度较低",title+" 剩余 "+remaining.ToString("0.#",CultureInfo.InvariantCulture)+"%，注意安排用量。",Forms.ToolTipIcon.Warning);}
+   lowQuota[title]=remaining;
+  }
+  async Task CheckUpdate() {
+   try {
+    using(var http=new System.Net.Http.HttpClient()) {
+     http.Timeout=TimeSpan.FromSeconds(10);http.DefaultRequestHeaders.Add("User-Agent","CodexUsage-Desktop");
+     string tag=Json.S(Json.Read(await http.GetStringAsync(UpdateUrl)),"tag_name");
+     if(IsNewer(tag,Assembly.GetExecutingAssembly().GetName().Version)&&window.IsLoaded) {
+      latestVersion=tag;balloonUrl=ReleaseUrl;
+      tray.ShowBalloonTip(10000,"发现新版本","Codex 用量 "+tag+" 已发布，点击查看并下载。",Forms.ToolTipIcon.Info);
+     }
+    }
+   }catch{}
+  }
   void SwitchModule(string name) {
    module=name;bool quota=name=="quota";
    C<Button>("TabQuotaButton").Background=Brush(quota?"#163D5C":"#0D1625");C<Button>("TabQuotaButton").Foreground=Brush(quota?"#BCEAFF":"#9BAEC8");
@@ -405,9 +432,9 @@ class App {
    }
   }
  }
- FrameworkElement QuotaWindow(object w) {
-  double minutes=Json.N(w,"windowDurationMins"),remaining=Math.Max(0,Math.Min(100,100-Json.N(w,"usedPercent")));bool known=Json.Get(w,"usedPercent")!=null;
-  string label=minutes>=1440?(minutes/1440).ToString("0.#")+" 天额度":minutes>=60?(minutes/60).ToString("0.#")+" 小时额度":minutes>0?minutes+" 分钟额度":"额度窗口";
+  FrameworkElement QuotaWindow(object w) {
+   double minutes=Json.N(w,"windowDurationMins"),remaining=Math.Max(0,Math.Min(100,100-Json.N(w,"usedPercent")));bool known=Json.Get(w,"usedPercent")!=null;
+   string label=WindowLabel(minutes);
   var stack=new StackPanel{Margin=new Thickness(0,0,0,12)};
   string accent=remaining<=10?"#F07783":remaining<=25?"#FFBA69":"#4BC9FF";
   var header=new Grid{Margin=new Thickness(0,0,0,8)};header.Children.Add(Text(label,12,"#A6BCD9"));
@@ -429,8 +456,11 @@ class App {
   var menu=new ContextMenu{Style=(Style)window.FindResource("SettingsMenuStyle"),ItemContainerStyle=(Style)window.FindResource("SettingsMenuItemStyle")};
   // A ContextMenu lives in a separate popup tree; explicitly share the palette and templates.
   menu.Resources.MergedDictionaries.Add(window.Resources);
-  var auto=new MenuItem{Header="每 60 秒自动刷新",IsCheckable=true,IsChecked=settings.AutoRefresh};auto.Click+=(s,e)=>{settings.AutoRefresh=auto.IsChecked;settings.Save();RenderQuotas();};menu.Items.Add(auto);
-  var scheduled=new MenuItem{Header="定时发送请求…"};scheduled.Click+=(s,e)=>ShowSchedule();menu.Items.Add(scheduled);
+   var auto=new MenuItem{Header="每 60 秒自动刷新",IsCheckable=true,IsChecked=settings.AutoRefresh};auto.Click+=(s,e)=>{settings.AutoRefresh=auto.IsChecked;settings.Save();RenderQuotas();};menu.Items.Add(auto);
+   var start=new MenuItem{Header="开机自启动",IsCheckable=true,IsChecked=AutoStartEnabled()};
+   start.Click+=(s,e)=>{try{SetAutoStart(start.IsChecked);}catch{start.IsChecked=AutoStartEnabled();MessageBox.Show(window,"无法保存自启动设置，请检查注册表权限。","开机自启动");}};
+   menu.Items.Add(start);
+   var scheduled=new MenuItem{Header="定时发送请求…"};scheduled.Click+=(s,e)=>ShowSchedule();menu.Items.Add(scheduled);
   var credits=new MenuItem{Header="账户 Credits 查询（联网）",IsCheckable=true,IsChecked=settings.AccountCredits,IsEnabled=!busy&&!resetting};
   credits.Click+=async(s,e)=> {
    if(credits.IsChecked&&MessageBox.Show(window,"读取账户 Credits 明细需要使用当前 Codex 数据目录 auth.json 中的登录令牌与账户标识，发送到 https://chatgpt.com/backend-api/wham/ 的只读用量接口。\n\n令牌仅在内存使用，不保存、不输出，也不发送到第三方。开启后随刷新查询；你可以随时在设置中关闭。\n\n允许开启？","账户 Credits 查询",MessageBoxButton.YesNo,MessageBoxImage.Question,MessageBoxResult.No)!=MessageBoxResult.Yes){credits.IsChecked=false;return;}
@@ -440,8 +470,9 @@ class App {
   menu.Items.Add(new Separator{Style=(Style)window.FindResource("MenuDivider")});
   var folder=new MenuItem{Header="选择 Codex 数据目录…",IsEnabled=!busy&&!resetting};folder.Click+=async(s,e)=>{using(var d=new Forms.FolderBrowserDialog{Description="选择包含 sessions 的 .codex 目录",SelectedPath=settings.CodexHome}){if(d.ShowDialog()==Forms.DialogResult.OK){settings.CodexHome=d.SelectedPath;settings.Save();logs=new LogReader();await Refresh();}}};menu.Items.Add(folder);
   var exe=new MenuItem{Header="指定 codex.exe…",IsEnabled=!busy&&!resetting};exe.Click+=async(s,e)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex 程序|codex.exe"};if(d.ShowDialog(window)==true){settings.Executable=d.FileName;settings.Save();await Refresh();}};menu.Items.Add(exe);
-  menu.Items.Add(new Separator{Style=(Style)window.FindResource("MenuDivider")});
-   var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.5.3\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
+     menu.Items.Add(new Separator{Style=(Style)window.FindResource("MenuDivider")});
+   if(latestVersion!=null){var update=new MenuItem{Header="新版本 "+latestVersion+" 可用 ↗"};update.Click+=(s,e)=>{try{Process.Start(new ProcessStartInfo{FileName=ReleaseUrl,UseShellExecute=true});}catch{}};menu.Items.Add(update);}
+   var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.6.0\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
   menu.PlacementTarget=C<Button>("SettingsButton");menu.Placement=System.Windows.Controls.Primitives.PlacementMode.Custom;
   menu.CustomPopupPlacementCallback=(popup,target,offset)=>new[]{new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,-popup.Height-8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal),new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,target.Height+8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal)};
   menu.IsOpen=true;
@@ -463,7 +494,13 @@ static class Tests {
   p=LogReader.Parse(new StringReader(legacy(100)+"\n"+legacy(50)+"\n{\"type\":\"token_count\""),"test");Assert(p.Rows.Sum(x=>x.Total)==150&&p.Bad==1,"reset and truncated line");result.AppendLine("PASS counter reset and partial log");
   var dir=Path.Combine(Path.GetTempPath(),"codex-usage-tests-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(Path.Combine(dir,"sessions"));Directory.CreateDirectory(Path.Combine(dir,"archived_sessions"));
   try{var now=DateTimeOffset.Now.ToString("o");var current=modern.Replace(t,now);File.WriteAllText(Path.Combine(dir,"sessions","a.jsonl"),current);File.WriteAllText(Path.Combine(dir,"archived_sessions","b.jsonl"),current);var reader=new LogReader();var s=reader.Read(dir,DateTime.Today);Assert(s.Rows.Count==1,"response dedupe across files");result.AppendLine("PASS response deduplication across session/archive");File.AppendAllText(Path.Combine(dir,"sessions","a.jsonl"),"\n"+current.Replace("response-test","response-second"));s=reader.Read(dir,DateTime.Today);Assert(s.Rows.Count==2,"cache invalidation");result.AppendLine("PASS changed-file refresh");}finally{foreach(var f in Directory.GetFiles(dir,"*.jsonl",SearchOption.AllDirectories))File.Delete(f);Directory.Delete(Path.Combine(dir,"sessions"));Directory.Delete(Path.Combine(dir,"archived_sessions"));Directory.Delete(dir);}
-  Assert(new LogReader().Read(Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString()),DateTime.Today).Found==false,"missing directory");result.AppendLine("PASS missing data directory");FeatureTests.Run(result);ScheduleTests.Run(result);result.AppendLine("ALL CHECKS PASSED");
+   Assert(new LogReader().Read(Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString()),DateTime.Today).Found==false,"missing directory");result.AppendLine("PASS missing data directory");
+   Assert(App.IsNewer("v9.9.9",new Version("1.6.0"))&&!App.IsNewer("v1.0.0",new Version("1.6.0"))&&!App.IsNewer("v1.6.0",new Version("1.6.0"))&&!App.IsNewer("latest",new Version("1.6.0"))&&!App.IsNewer("",new Version("1.6.0")),"update tag comparison");result.AppendLine("PASS update tag comparison");
+   Assert(App.LowQuotaCrossed(false,0,8)&&!App.LowQuotaCrossed(true,8,5)&&App.LowQuotaCrossed(true,12,9)&&!App.LowQuotaCrossed(true,5,20)&&!App.LowQuotaCrossed(true,5,11),"low quota transition");result.AppendLine("PASS low quota notification transitions");
+   string previousKey=App.AutoStartKey;string testRoot="Software\\CodexUsageSelfTest";
+   try{App.AutoStartKey=testRoot+"\\run-"+Guid.NewGuid().ToString("N");Assert(!App.AutoStartEnabled(),"autostart off initially");App.SetAutoStart(true);Assert(App.AutoStartEnabled(),"autostart registry written");App.SetAutoStart(false);Assert(!App.AutoStartEnabled(),"autostart registry removed");}
+   finally{App.AutoStartKey=previousKey;try{Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(testRoot);}catch{}}
+   result.AppendLine("PASS autostart registry round-trip");FeatureTests.Run(result);ScheduleTests.Run(result);result.AppendLine("ALL CHECKS PASSED");
  }catch(Exception ex){result.AppendLine("FAIL: "+ex.Message);Environment.ExitCode=1;}File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"self-test.txt"),result.ToString());}
 }
 }

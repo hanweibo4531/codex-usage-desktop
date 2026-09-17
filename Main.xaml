@@ -31,6 +31,34 @@
     <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush234262}"/><Setter Property="Foreground" Value="{DynamicResource BrushEAF6FF}"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush234262}"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
    </Style>
    <Style TargetType="ToolTip"><Setter Property="Background" Value="{DynamicResource Brush172338}"/><Setter Property="Foreground" Value="{DynamicResource BrushEAF2FF}"/><Setter Property="BorderBrush" Value="{DynamicResource Brush2A4461}"/></Style>
+   <Style TargetType="TextBox">
+    <Setter Property="Foreground" Value="{DynamicResource BrushEAF2FF}"/><Setter Property="Background" Value="{DynamicResource Brush0D1625}"/><Setter Property="BorderBrush" Value="{DynamicResource Brush23334A}"/><Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CaretBrush" Value="{DynamicResource Brush4BC9FF}"/><Setter Property="SelectionBrush" Value="{DynamicResource Brush2A4461}"/><Setter Property="Padding" Value="10,8"/>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TextBox">
+     <Border x:Name="Field" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7"><ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/></Border>
+     <ControlTemplate.Triggers>
+      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource Brush29638C}"/></Trigger>
+      <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource Brush4BC9FF}"/></Trigger>
+      <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+     </ControlTemplate.Triggers>
+    </ControlTemplate></Setter.Value></Setter>
+   </Style>
+   <Style TargetType="CheckBox">
+    <Setter Property="Foreground" Value="{DynamicResource BrushEAF2FF}"/><Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
+     <StackPanel Orientation="Horizontal" Background="Transparent">
+      <Border x:Name="Box" Width="18" Height="18" CornerRadius="5" Background="{DynamicResource Brush0D1625}" BorderBrush="{DynamicResource Brush23334A}" BorderThickness="1" VerticalAlignment="Center">
+       <Path x:Name="Check" Data="M 3,9 L 7,13 L 14,4" Stroke="{DynamicResource Brush4BC9FF}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Visibility="Hidden"/>
+      </Border>
+      <ContentPresenter Margin="9,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+     </StackPanel>
+     <ControlTemplate.Triggers>
+      <Trigger Property="IsChecked" Value="True"><Setter TargetName="Check" Property="Visibility" Value="Visible"/><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource Brush4BC9FF}"/></Trigger>
+      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource Brush29638C}"/></Trigger>
+      <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+     </ControlTemplate.Triggers>
+    </ControlTemplate></Setter.Value></Setter>
+   </Style>
    <Style x:Key="ScrollPageButton" TargetType="RepeatButton"><Setter Property="Focusable" Value="False"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></Setter.Value></Setter></Style>
    <Style x:Key="SlimScrollBar" TargetType="ScrollBar">
     <Setter Property="Width" Value="12"/><Setter Property="Background" Value="Transparent"/><Setter Property="Focusable" Value="False"/>
