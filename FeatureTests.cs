@@ -33,23 +33,12 @@ static class FeatureTests {
    var duplicates=Json.Read("{\"data\":[{\"date\":\"2026-09-17\",\"totals\":{\"credits\":1}},{\"date\":\"2026-09-17\",\"totals\":{\"credits\":1}}]}");
    Check(WeeklyQuota.Parse(weekUsage(83),duplicates,moment).Days.Count==0,"duplicate dates rejected without partial totals");
    Check(!WeeklyQuota.Parse(weekUsage(83),daily,moment.AddDays(8)).TotalCredits.HasValue,"expired cycle rejected");
-   output.AppendLine("PASS weekly estimate matches screenshot; 30-day boundary, missing data, duplicate and reset guards");
-   Check(CreditBalance.Read(Json.Read("{\"balance\":\"2500\"}")).Amount=="≈ $100.00","credits converted to dollars, not treated as dollars");
-   Check(CreditBalance.Read(Json.Read("{\"balance\":\"0\",\"hasCredits\":false}")).Amount=="≈ $0.00","explicit zero balance");
-   Check(CreditBalance.Read(Json.Read("{\"balance\":\"-25\"}")).Amount=="≈ -$1.00","negative balance retained");
-   Check(CreditBalance.Read(Json.Read("{\"balance\":\"0.01\"}")).Amount=="< $0.01","tiny positive balance not rounded to zero");
-   Check(CreditBalance.Read(Json.Read("{\"balance\":\"-0.01\"}")).Amount=="负余额 < $0.01","tiny negative balance retained");
-   foreach(string value in new[]{"null","{}","{\"hasCredits\":false}","{\"hasCredits\":true}","{\"balance\":null}","{\"balance\":\"NaN\"}","{\"balance\":\"1,2\"}"})
-    Check(CreditBalance.Read(Json.Read(value)).Amount=="未提供","unknown balance must not become zero: "+value);
-   Check(CreditBalance.Read(Json.Read("{\"unlimited\":true,\"balance\":\"0\"}")).Amount=="无限额度","unlimited takes precedence");
-   var oldCulture=System.Threading.Thread.CurrentThread.CurrentCulture;
-   try {System.Threading.Thread.CurrentThread.CurrentCulture=new System.Globalization.CultureInfo("de-DE");Check(CreditBalance.Read(Json.Read("{\"balance\":\"312.5\"}")).Amount=="≈ $12.50","invariant monetary parsing");}
-   finally {System.Threading.Thread.CurrentThread.CurrentCulture=oldCulture;}
-   string quotaLog="{\"timestamp\":\"2026-09-17T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"credits\":{\"balance\":\"2500\",\"has_credits\":true,\"unlimited\":false}}}}";
-   var historicalCredits=Json.Get(LogReader.Parse(new StringReader(quotaLog),"credit-test").Quota,"credits");
-   Check(CreditBalance.Read(historicalCredits).Amount=="≈ $100.00"&&Json.Get(historicalCredits,"hasCredits") as bool? ==true,"log credits normalization");
-   output.AppendLine("PASS USD conversion, zero, negative, small, unknown, unlimited and historical credit balances");
-   var state=State(3,"test-account");
+    output.AppendLine("PASS weekly estimate matches screenshot; 30-day boundary, missing data, duplicate and reset guards");
+    string quotaLog="{\"timestamp\":\"2026-09-17T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"credits\":{\"balance\":\"2500\",\"has_credits\":true,\"unlimited\":false}}}}";
+    var historicalCredits=Json.Get(LogReader.Parse(new StringReader(quotaLog),"credit-test").Quota,"credits");
+    Check(Json.S(historicalCredits,"balance")=="2500"&&Json.Get(historicalCredits,"hasCredits") as bool? ==true,"log credits normalization");
+    output.AppendLine("PASS log credits normalization");
+    var state=State(3,"test-account");
    foreach(string outcome in new[]{"reset","alreadyRedeemed","nothingToReset","noCredit"}) {
     ResetTicket saved=null;var coordinator=new ResetCoordinator(null,t=>saved=t);
     string result=coordinator.Execute(state,dir,k=>{Check(saved!=null&&saved.Key==k,"persist before send");return Task.FromResult(Outcome(outcome));}).GetAwaiter().GetResult();
@@ -123,16 +112,7 @@ static class FeatureTests {
     typeof(App).GetMethod("SwitchModule",flags).Invoke(instance,new object[]{"quota"});
     Check(((ScrollViewer)window.FindName("QuotaScroll")).Visibility==Visibility.Visible&&((ScrollViewer)window.FindName("LocalScroll")).Visibility==Visibility.Collapsed,"quota module restored");
     output.AppendLine("PASS tabbed modules switch account and local views");
-   foreach(string theme in new[]{"dark","light"}) {
-    Theme.Apply(window,theme);
-    var card=App.BuildCreditBalance(historicalCredits,true);var body=(StackPanel)card.Child;
-    Check(((TextBlock)body.Children[0]).Text.Contains("历史快照")&&((TextBlock)body.Children[1]).Text=="≈ $100.00","historical USD card text");
-    Check(((SolidColorBrush)card.Background).Color==(Color)ColorConverter.ConvertFromString(Theme.Resolve("#0E2438")),"balance card theme");
-    card.Measure(new Size(380,double.PositiveInfinity));card.Arrange(new Rect(0,0,380,card.DesiredSize.Height));
-    Check(card.DesiredSize.Height>80&&card.DesiredSize.Height<180,"balance card layout");
-   }
-   output.AppendLine("PASS balance card historical label, layout and both themes");
-   Theme.Apply(window,"light");var light=((SolidColorBrush)window.Resources["Brush080D16"]).Color;
+    Theme.Apply(window,"light");var light=((SolidColorBrush)window.Resources["Brush080D16"]).Color;
    Check(light.R>dark.R&&Theme.Resolve("#EAF2FF")=="#172B46","light palette");
    Check(((SolidColorBrush)((Border)window.Content).Background).Color==light,"live light binding");
    foreach(bool retry in new[]{false,true}) {

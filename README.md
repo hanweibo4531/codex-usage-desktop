@@ -12,7 +12,6 @@
 
 - 模块化分页：账户额度与本机用量分为两个页签，首页更清爽。
 - 账户多额度池、剩余百分比、下次重置时间及可用重置次数。
-- 余额折合美元：显示额外 Credits 余额及美元估算值，支持无限额度、未知余额与离线快照。
 - 额度重置：确认后使用一次可用重置，超时重试复用同一请求标识。
 - 配额深度分析：已用比例、本周已用 Credits、推算总额、周价值（美元估算）。
 - 账户本周期明细与历史记录，历史可切换近 7 天 / 近 30 天，显示每日 Credits、Tokens、金额、轮数和合计。
@@ -87,8 +86,6 @@ GitHub Actions 在推送和 Pull Request 时构建、运行解析检查，并提
 ## 数据来源与统计口径
 
 账户额度来自 [Codex App Server](https://learn.chatgpt.com/docs/app-server) 的 `account/rateLimits/read`。本程序不会发起模型任务。
-
-美元余额读取各额度池的 `credits.balance`，按 25 Credits ≈ $1 显示参考价值，同时保留原始 Credits。换算参考 [OpenAI 官方示例](https://developers.openai.com/community/students)（2,500 Credits 等值 $100）；这是额外 Credits 的估算价值，不是 API 现金余额，也不把套餐内百分比折算为美元。未返回或无法解析余额时显示“未提供”，无限额度单独标明；离线余额标注为历史快照，时间沿用所在卡片的日志时间。
 
 ### 周价值与月度历史
 

@@ -20,8 +20,8 @@ using Forms = System.Windows.Forms;
 
 [assembly: AssemblyTitle("Codex Usage Desktop")]
 [assembly: AssemblyDescription("Codex quota and token usage monitor")]
-[assembly: AssemblyVersion("1.5.0.0")]
-[assembly: AssemblyFileVersion("1.5.0.0")]
+[assembly: AssemblyVersion("1.5.1.0")]
+[assembly: AssemblyFileVersion("1.5.1.0")]
 
 namespace CodexUsage {
 static class Json {
@@ -100,22 +100,6 @@ class LogReader {
   snapshot.Rows=snapshot.Rows.OrderByDescending(r=>r.Time).ToList(); return snapshot;
  }
 }
-class CreditBalance {
- // Official reference: https://developers.openai.com/community/students (2,500 credits = $100).
- // This is a reference conversion of extra credits, not a dollar value for plan rate limits.
- public const decimal CreditsPerDollar=25m;
- public string Amount="未提供",Detail="账户未提供余额，套餐百分比无法直接折算美元。";
- public static CreditBalance Read(object credits) {
-  var result=new CreditBalance();
-  if(Json.Get(credits,"unlimited") as bool? == true) {result.Amount="无限额度";result.Detail="账户返回无限 Credits，无法折算为固定金额。";return result;}
-  decimal balance;
-  if(!decimal.TryParse(Json.S(credits,"balance"),NumberStyles.AllowLeadingSign|NumberStyles.AllowDecimalPoint|NumberStyles.AllowLeadingWhite|NumberStyles.AllowTrailingWhite,CultureInfo.InvariantCulture,out balance))return result;
-  decimal dollars=balance/CreditsPerDollar;
-  result.Amount=dollars>0&&dollars<0.01m?"< $0.01":dollars<0&&dollars>-0.01m?"负余额 < $0.01":"≈ "+(dollars<0?"-$":"$")+Math.Abs(dollars).ToString("N2",CultureInfo.InvariantCulture);
-  result.Detail=balance.ToString("0.############################",CultureInfo.InvariantCulture)+" Credits · 按 25 Credits ≈ $1 估算";
-  return result;
- }
-}
 class Settings {
  public string CodexHome; public string Executable; public bool AutoRefresh=true,AccountCredits=false; public string Theme="dark";
  public static string FileName=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"CodexUsage","settings.json");
@@ -160,7 +144,7 @@ class AccountClient : IDisposable {
     process.ErrorDataReceived+=(s,e)=>{};
     process.Exited+=(s,e)=>{lock(gate){foreach(var t in pending.Values)t.TrySetException(new IOException("Codex 服务已退出"));}};
     process.Start();process.BeginOutputReadLine();process.BeginErrorReadLine();
-     await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.5.0"}});
+     await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.5.1"}});
     process.StandardInput.WriteLine("{\"method\":\"initialized\"}");process.StandardInput.Flush();
    }
    var result=await Call("account/rateLimits/read",null);
@@ -306,9 +290,8 @@ class App {
   foreach(var pair in quotas) {
    var q=pair.Value;var stack=new StackPanel();string name=Json.S(q,"limitName");if(name=="")name=Json.S(q,"limitId");if(name==""||name=="codex")name="Codex";
    string plan=Json.S(q,"planType");var heading=new Grid();var label=Text(name+(plan==""?"":"  "+CultureInfo.InvariantCulture.TextInfo.ToTitleCase(plan)),14,"#EDF5FF");label.FontWeight=FontWeights.SemiBold;heading.Children.Add(label);stack.Children.Add(heading);
-   var stamp=real?live.Time:snapshot.QuotaTime;stack.Children.Add(new TextBlock{Text=(real?"实时同步":"日志快照")+" · "+stamp.ToString("MM/dd HH:mm:ss"),Foreground=Brush(real?"#849DBD":"#FFC178"),FontSize=10,Margin=new Thickness(0,5,0,12)});
-   if(Json.Get(q,"credits")!=null)stack.Children.Add(BuildCreditBalance(Json.Get(q,"credits"),!real));
-   bool has=false;foreach(var key in new[]{"primary","secondary"}) {var w=Json.Get(q,key);if(w!=null){stack.Children.Add(QuotaWindow(w));has=true;}}
+    var stamp=real?live.Time:snapshot.QuotaTime;stack.Children.Add(new TextBlock{Text=(real?"实时同步":"日志快照")+" · "+stamp.ToString("MM/dd HH:mm:ss"),Foreground=Brush(real?"#849DBD":"#FFC178"),FontSize=10,Margin=new Thickness(0,5,0,12)});
+    bool has=false;foreach(var key in new[]{"primary","secondary"}) {var w=Json.Get(q,key);if(w!=null){stack.Children.Add(QuotaWindow(w));has=true;}}
    if(!has)stack.Children.Add(Text("当前账户未返回额度窗口",12,"#90A5C0"));
    panel.Children.Add(new Border{Style=(Style)window.FindResource("Card"),Child=stack});
   }
@@ -317,13 +300,6 @@ class App {
   C<TextBlock>("StatusText").Foreground=Brush(real?"#4BC9FF":"#FFC178");C<TextBlock>("StatusText").ToolTip=live.Error??"账户额度来自 Codex";
   UpdateResetButton();
    C<ScrollViewer>("QuotaScroll").UpdateLayout();C<ScrollViewer>("QuotaScroll").ScrollToVerticalOffset(scrollOffset);
- }
- internal static Border BuildCreditBalance(object credits,bool historical) {
-  var balance=CreditBalance.Read(credits);var body=new StackPanel();
-  body.Children.Add(Text(historical?"余额折合（USD）· 历史快照":"余额折合（USD）",11,"#6BA5CC"));
-  var amount=Text(balance.Amount,26,"#61D0FF");amount.FontWeight=FontWeights.Bold;amount.TextWrapping=TextWrapping.Wrap;amount.Margin=new Thickness(0,6,0,4);body.Children.Add(amount);
-  body.Children.Add(new TextBlock{Text=balance.Detail,FontSize=10,Foreground=Brush("#849DBD"),TextWrapping=TextWrapping.Wrap});
-  return new Border{Child=body,Background=Brush("#0E2438"),BorderBrush=Brush("#21567B"),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(8),Padding=new Thickness(12),Margin=new Thickness(0,0,0,12),ToolTip="额外 Credits 的美元参考价值，不含套餐内额度；实际可用余额以账户页面为准。"};
  }
  internal static StackPanel BuildCreditTable(List<CreditDay> rows) {
   var table=new StackPanel{Margin=new Thickness(0,8,0,0)};
@@ -464,7 +440,7 @@ class App {
   var folder=new MenuItem{Header="选择 Codex 数据目录…",IsEnabled=!busy&&!resetting};folder.Click+=async(s,e)=>{using(var d=new Forms.FolderBrowserDialog{Description="选择包含 sessions 的 .codex 目录",SelectedPath=settings.CodexHome}){if(d.ShowDialog()==Forms.DialogResult.OK){settings.CodexHome=d.SelectedPath;settings.Save();logs=new LogReader();await Refresh();}}};menu.Items.Add(folder);
   var exe=new MenuItem{Header="指定 codex.exe…",IsEnabled=!busy&&!resetting};exe.Click+=async(s,e)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex 程序|codex.exe"};if(d.ShowDialog(window)==true){settings.Executable=d.FileName;settings.Save();await Refresh();}};menu.Items.Add(exe);
   menu.Items.Add(new Separator{Style=(Style)window.FindResource("MenuDivider")});
-   var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.5.0\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
+   var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.5.1\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
   menu.PlacementTarget=C<Button>("SettingsButton");menu.Placement=System.Windows.Controls.Primitives.PlacementMode.Custom;
   menu.CustomPopupPlacementCallback=(popup,target,offset)=>new[]{new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,-popup.Height-8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal),new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,target.Height+8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal)};
   menu.IsOpen=true;

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1
+
+- Removed the USD balance conversion card from quota cards and its balance formatting helpers.
+- Kept quota percentages, reset times, weekly USD estimates and account history untouched.
+- Replaced balance regression checks with a log credits normalization check.
+
 ## 1.5.0
 
 - Split the dashboard into Account and Local usage modules with a segmented tab switcher under the title bar.
