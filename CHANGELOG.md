@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.2
+
+- Replaced the account history range buttons with a dropdown matching the model selector styling.
+- Kept the current range selected across refreshes and re-renders.
+
 ## 1.5.1
 
 - Removed the USD balance conversion card from quota cards and its balance formatting helpers.

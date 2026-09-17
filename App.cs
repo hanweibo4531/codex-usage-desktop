@@ -20,8 +20,8 @@ using Forms = System.Windows.Forms;
 
 [assembly: AssemblyTitle("Codex Usage Desktop")]
 [assembly: AssemblyDescription("Codex quota and token usage monitor")]
-[assembly: AssemblyVersion("1.5.1.0")]
-[assembly: AssemblyFileVersion("1.5.1.0")]
+[assembly: AssemblyVersion("1.5.2.0")]
+[assembly: AssemblyFileVersion("1.5.2.0")]
 
 namespace CodexUsage {
 static class Json {
@@ -144,7 +144,7 @@ class AccountClient : IDisposable {
     process.ErrorDataReceived+=(s,e)=>{};
     process.Exited+=(s,e)=>{lock(gate){foreach(var t in pending.Values)t.TrySetException(new IOException("Codex 服务已退出"));}};
     process.Start();process.BeginOutputReadLine();process.BeginErrorReadLine();
-     await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.5.1"}});
+     await Call("initialize",new{clientInfo=new{name="codex_usage_desktop",title="Codex Usage",version="1.5.2"}});
     process.StandardInput.WriteLine("{\"method\":\"initialized\"}");process.StandardInput.Flush();
    }
    var result=await Call("account/rateLimits/read",null);
@@ -276,10 +276,11 @@ class App {
   if(weekly.Days.Count>0) {
    var details=new StackPanel();details.Children.Add(Text("本周期明细（UTC 日期）",12,"#EDF5FF"));
    details.Children.Add(BuildCreditTable(weekly.Days.Where(d=>d.Date>=weekly.Start.Date).ToList()));
-   var controls=new Grid{Margin=new Thickness(0,12,0,8)};controls.Children.Add(Text("历史记录",12,"#EDF5FF"));
-   var options=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
-   foreach(int range in new[]{7,30}) {int selected=range;var button=new Button{Content="近 "+range+" 天",Padding=new Thickness(9,5,9,5),Margin=new Thickness(4,0,0,0),Background=Brush(historyDays==range?"#163D5C":"#111B2B")};button.Click+=(s,e)=>{historyDays=selected;RenderQuotas();};options.Children.Add(button);}
-   controls.Children.Add(options);details.Children.Add(controls);
+    var controls=new Grid{Margin=new Thickness(0,12,0,8)};controls.Children.Add(Text("历史记录",12,"#EDF5FF"));
+    var options=new ComboBox{Width=112,HorizontalAlignment=HorizontalAlignment.Right,VerticalAlignment=VerticalAlignment.Center,ToolTip="切换账户历史明细范围（不含本周期）"};
+    options.Items.Add("近 7 天");options.Items.Add("近 30 天");options.SelectedIndex=historyDays==7?0:1;
+    options.SelectionChanged+=(s,e)=>{int value=options.SelectedIndex==0?7:30;if(value!=historyDays){historyDays=value;RenderQuotas();}};
+    controls.Children.Add(options);details.Children.Add(controls);
    details.Children.Add(BuildCreditTable(weekly.Days.Where(d=>d.Date<weekly.Start.Date&&d.Date>=weekly.Time.Date.AddDays(1-historyDays)).ToList()));
    weeklyPanel.Children.Add(new Border{Style=(Style)window.FindResource("Card"),Child=details});
   }
@@ -440,7 +441,7 @@ class App {
   var folder=new MenuItem{Header="选择 Codex 数据目录…",IsEnabled=!busy&&!resetting};folder.Click+=async(s,e)=>{using(var d=new Forms.FolderBrowserDialog{Description="选择包含 sessions 的 .codex 目录",SelectedPath=settings.CodexHome}){if(d.ShowDialog()==Forms.DialogResult.OK){settings.CodexHome=d.SelectedPath;settings.Save();logs=new LogReader();await Refresh();}}};menu.Items.Add(folder);
   var exe=new MenuItem{Header="指定 codex.exe…",IsEnabled=!busy&&!resetting};exe.Click+=async(s,e)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex 程序|codex.exe"};if(d.ShowDialog(window)==true){settings.Executable=d.FileName;settings.Save();await Refresh();}};menu.Items.Add(exe);
   menu.Items.Add(new Separator{Style=(Style)window.FindResource("MenuDivider")});
-   var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.5.1\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
+   var about=new MenuItem{Header="关于与统计口径"};about.Click+=(s,e)=>MessageBox.Show(window,"Codex 用量 1.5.2\n\n账户额度来自 Codex 官方接口；离线时显示带时间的日志快照。\n本机 Token 包含缓存输入，不代表账户账单。列表圆点代表用量记录，不代表请求成功率。\n日志缺失时统计可能不完整。\n\n重置额度需要你的确认并使用账号可用的重置次数；不会清空本机历史。\n数据目录："+settings.CodexHome,"关于 Codex 用量");menu.Items.Add(about);
   menu.PlacementTarget=C<Button>("SettingsButton");menu.Placement=System.Windows.Controls.Primitives.PlacementMode.Custom;
   menu.CustomPopupPlacementCallback=(popup,target,offset)=>new[]{new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,-popup.Height-8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal),new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(target.Width-popup.Width,target.Height+8),System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal)};
   menu.IsOpen=true;
