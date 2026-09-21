@@ -99,6 +99,29 @@ static class FeatureTests {
     // Exercise the actual local filter and chart at the 30-day boundary without network access.
     var instance=new App();var flags=BindingFlags.Instance|BindingFlags.NonPublic;
     typeof(App).GetField("window",flags).SetValue(instance,window);
+    var boundary=DateTime.Today;
+    var samples=new[]{new Usage{Time=boundary.AddSeconds(-1),Total=1},new Usage{Time=boundary,Total=2},new Usage{Time=boundary.AddHours(5),Total=4}};
+    Check(App.WindowRows(samples,boundary,boundary.AddHours(5)).Sum(r=>r.Total)==2,"quota windows use inclusive start and exclusive end");
+    Check(!App.QuotaReset(Json.Read("{\"resetsAt\":1e100}")).HasValue,"invalid reset timestamp rejected");
+    var fixture=new Snapshot{Found=true};fixture.Rows.AddRange(samples);
+    typeof(App).GetField("snapshot",flags).SetValue(instance,fixture);
+    foreach(string palette in new[]{"light","dark"}) {
+     Theme.Apply(window,palette);
+     foreach(double width in new[]{410.0,680.0}) {
+      var sample=Json.Read(Json.Write(new{usedPercent=85,windowDurationMins=10080,resetsAt=(DateTime.UtcNow.AddDays(2)-new DateTime(1970,1,1)).TotalSeconds}));
+      var card=(FrameworkElement)typeof(App).GetMethod("BuildQuotaWindow",flags).Invoke(instance,new[]{sample});
+      card.Measure(new Size(width,double.PositiveInfinity));card.Arrange(new Rect(0,0,width,card.DesiredSize.Height));card.UpdateLayout();
+      card.Measure(new Size(width,double.PositiveInfinity));card.Arrange(new Rect(0,0,width,card.DesiredSize.Height));card.UpdateLayout();
+      Check(card.ActualWidth==width,"quota card responsive width");
+      var body=(StackPanel)((Border)card).Child;var columns=(System.Windows.Controls.Primitives.UniformGrid)body.Children[2];
+      Check(columns.Columns==(width<540?1:3),"quota detail columns adapt to window width");
+      var bitmap=new System.Windows.Media.Imaging.RenderTargetBitmap((int)width,(int)Math.Ceiling(card.ActualHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(card);
+      var encoder=new System.Windows.Media.Imaging.PngBitmapEncoder();encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+      using(var image=File.Create(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"quota-"+palette+"-"+width+".png")))encoder.Save(image);
+     }
+    }
+    Theme.Apply(window,"dark");
+    output.AppendLine("PASS quota window boundaries, invalid timestamps, responsive cards and both themes");
     var table=instance.BuildCreditTable(week.Days);Check(table.Children.Count==3,"monthly table has header, scroll area and totals");
     Check(((ScrollViewer)table.Children[1]).Style==(Style)window.FindResource("SlimScrollViewer"),"history table uses slim scrollbar");
     typeof(App).GetField("days",flags).SetValue(instance,30);

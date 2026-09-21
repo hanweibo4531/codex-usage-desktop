@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.0
+
+- Redesigned the quota page with four summary tiles and separate window cards featuring reset badges, remaining quota bars, and previous/current/forecast columns.
+- Window details use local log records with explicit source labels; unavailable costs, success rates and forecasts remain unknown.
+- Added responsive stacking for narrow windows and regression coverage for window boundaries, invalid timestamps and both themes.
+
 ## 1.6.0
 
 - Added an opt-in autostart setting stored in the current user's registry Run key.

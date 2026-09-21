@@ -20,8 +20,8 @@ using Forms = System.Windows.Forms;
 
 [assembly: AssemblyTitle("Codex Usage Desktop")]
 [assembly: AssemblyDescription("Codex quota and token usage monitor")]
-[assembly: AssemblyVersion("1.6.0.0")]
-[assembly: AssemblyFileVersion("1.6.0.0")]
+[assembly: AssemblyVersion("1.7.0.0")]
+[assembly: AssemblyFileVersion("1.7.0.0")]
 
 namespace CodexUsage {
 static class Json {
@@ -156,7 +156,7 @@ class AccountClient : IDisposable {
  }
  public void Dispose() { var p=process;process=null;if(p!=null){try {if(!p.HasExited){p.StandardInput.Close();if(!p.WaitForExit(700))p.Kill();}}catch{}p.Dispose();} }
 }
-class App {
+partial class App {
  Window window; Settings settings; AccountClient account=new AccountClient(); LogReader logs=new LogReader(); Snapshot snapshot=new Snapshot(); AccountResult live=new AccountResult();
   DispatcherTimer timer; Forms.NotifyIcon tray; bool busy,updatingFilter,resetting; int days=1; string module="quota";
  ResetCoordinator reset; string resetStorageError;
@@ -279,6 +279,7 @@ class App {
   C<TextBlock>("ChartTitle").Text=days==1?"今日用量分布":"近 "+days+" 天用量分布";C<TextBlock>("ChartStart").Text=days==1?"00:00":DateTime.Today.AddDays(1-days).ToString("MM/dd");C<TextBlock>("ChartEnd").Text=days==1?"23:00":DateTime.Today.ToString("MM/dd");
  }
  void RenderQuotas() {
+  RenderQuotaOverview();
    double scrollOffset=C<ScrollViewer>("QuotaScroll").VerticalOffset;
   var weeklyPanel=C<StackPanel>("WeeklyQuotaPanel");weeklyPanel.Children.Clear();weeklyPanel.Children.Add(BuildWeeklyQuota(weekly));
   if(weekly.Days.Count>0) {
@@ -302,7 +303,7 @@ class App {
     var stamp=real?live.Time:snapshot.QuotaTime;stack.Children.Add(new TextBlock{Text=(real?"实时同步":"日志快照")+" · "+stamp.ToString("MM/dd HH:mm:ss"),Foreground=Brush(real?"#849DBD":"#FFC178"),FontSize=10,Margin=new Thickness(0,5,0,12)});
     bool has=false;foreach(var key in new[]{"primary","secondary"}) {var w=Json.Get(q,key);if(w!=null){stack.Children.Add(QuotaWindow(w));has=true;if(real)NotifyLowQuota(name+" · "+WindowLabel(Json.N(w,"windowDurationMins")),w);}}
    if(!has)stack.Children.Add(Text("当前账户未返回额度窗口",12,"#90A5C0"));
-   panel.Children.Add(new Border{Style=(Style)window.FindResource("Card"),Child=stack});
+   panel.Children.Add(stack);
   }
   if(quotas.Count==0) {var s=new StackPanel();s.Children.Add(Text("Codex",14,"#EDF5FF"));s.Children.Add(new TextBlock{Text=busy?"正在读取账户额度…":"暂无额度数据\n请确认 Codex 已登录，再点击刷新。",TextWrapping=TextWrapping.Wrap,Foreground=Brush("#90A5C0"),Margin=new Thickness(0,10,0,0)});panel.Children.Add(new Border{Style=(Style)window.FindResource("Card"),Child=s});}
   C<TextBlock>("StatusText").Text=real?"●  已连接 · "+(settings.AutoRefresh?"每 60 秒刷新":"自动刷新已暂停"):"●  "+(snapshot.Quota!=null?"本机快照 · 实时额度未连接":"等待额度连接");
@@ -432,19 +433,7 @@ class App {
    }
   }
  }
-  FrameworkElement QuotaWindow(object w) {
-   double minutes=Json.N(w,"windowDurationMins"),remaining=Math.Max(0,Math.Min(100,100-Json.N(w,"usedPercent")));bool known=Json.Get(w,"usedPercent")!=null;
-   string label=WindowLabel(minutes);
-  var stack=new StackPanel{Margin=new Thickness(0,0,0,12)};
-  string accent=remaining<=10?"#F07783":remaining<=25?"#FFBA69":"#4BC9FF";
-  var header=new Grid{Margin=new Thickness(0,0,0,8)};header.Children.Add(Text(label,12,"#A6BCD9"));
-  var right=Text(known?remaining.ToString("0.#")+"%":"—",27,accent);right.FontFamily=new FontFamily("Consolas");right.FontWeight=FontWeights.Bold;right.HorizontalAlignment=HorizontalAlignment.Right;right.ToolTip="剩余额度";header.Children.Add(right);stack.Children.Add(header);
-  var g=new Grid{Height=5};g.Children.Add(new Border{Background=Brush("#223148"),CornerRadius=new CornerRadius(2)});
-  var fill=new Border{Background=Brush(accent),CornerRadius=new CornerRadius(2),HorizontalAlignment=HorizontalAlignment.Left};
-  g.SizeChanged+=(s,e)=>fill.Width=known?Math.Max(0,g.ActualWidth*remaining/100):0;g.Children.Add(fill);stack.Children.Add(g);
-  string reset="重置时间未知";double unix=Json.N(w,"resetsAt");if(unix>0){try {var date=new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc).AddSeconds(unix).ToLocalTime();var delta=date-DateTime.Now;reset=(delta.TotalSeconds<=0?"已到重置时间，等待最新数据":delta.TotalDays>=1?(int)delta.TotalDays+" 天后重置":delta.TotalHours>=1?(int)delta.TotalHours+" 小时后重置":Math.Max(1,(int)delta.TotalMinutes)+" 分钟后重置")+" · "+date.ToString("MM/dd HH:mm");}catch{}}
-  stack.Children.Add(new TextBlock{Text="◷  "+reset,Foreground=Brush("#8CA3C2"),FontSize=10,Margin=new Thickness(0,6,0,0)});return stack;
- }
+  FrameworkElement QuotaWindow(object w) { return BuildQuotaWindow(w); }
  void Export() {
   var dialog=new Microsoft.Win32.SaveFileDialog{Filter="CSV 文件|*.csv",FileName="codex-usage-"+DateTime.Now.ToString("yyyyMMdd")+".csv"};if(dialog.ShowDialog(window)!=true)return;
   var sb=new StringBuilder("时间,模型,输入Tokens,缓存输入Tokens,输出Tokens,总Tokens\r\n");

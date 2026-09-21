@@ -1,5 +1,6 @@
 # Local builds, exports and diagnostics
 dist/
+staging/
 artifacts/
 *.zip
 *.csv

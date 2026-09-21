@@ -1,4 +1,4 @@
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Codex 用量" Width="520" Height="830" MinWidth="470" MinHeight="620" WindowStyle="None" AllowsTransparency="True" Background="Transparent" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="12" Foreground="{DynamicResource BrushEAF2FF}" ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterScreen" UseLayoutRounding="True" SnapsToDevicePixels="True">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Codex 用量" Width="760" Height="940" MinWidth="470" MinHeight="620" WindowStyle="None" AllowsTransparency="True" Background="Transparent" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="12" Foreground="{DynamicResource BrushEAF2FF}" ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterScreen" UseLayoutRounding="True" SnapsToDevicePixels="True">
   <Window.Resources>
    <Style x:Key="SettingsMenuStyle" TargetType="ContextMenu">
     <Setter Property="Background" Value="{DynamicResource Brush111B2B}"/><Setter Property="Foreground" Value="{DynamicResource BrushEAF2FF}"/>
@@ -131,6 +131,7 @@
      <ScrollViewer Style="{StaticResource SlimScrollViewer}" x:Name="QuotaScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Margin="0,0,6,0">
        <Grid Margin="0,0,0,12"><StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="ResetButton" Content="重置额度" FontSize="11" Padding="8,6" Margin="0,0,8,0" Background="{DynamicResource Brush163D5C}" Foreground="{DynamicResource BrushBCEAFF}"/><TextBlock x:Name="ResetCount" Foreground="{DynamicResource Brush56C5F5}" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"/><Button x:Name="RefreshButton" Content="↻  刷新" Foreground="{DynamicResource Brush80D8FF}" Padding="11,6" Background="{DynamicResource Brush102A42}"/></StackPanel></Grid>
+       <StackPanel x:Name="QuotaOverview"/>
        <StackPanel x:Name="QuotaCards"/>
        <StackPanel x:Name="WeeklyQuotaPanel"/>
        <Border Style="{StaticResource Card}" Padding="12,10"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock x:Name="ScheduleSummary" Text="定时请求 · 未启用" Foreground="{DynamicResource BrushEAF2FF}" FontSize="12"/><TextBlock x:Name="ScheduleLast" Foreground="{DynamicResource Brush849DBD}" FontSize="10" Margin="0,5,8,0" TextWrapping="Wrap"/></StackPanel><Button x:Name="ScheduleButton" Grid.Column="1" Content="设置定时" Padding="10,6" VerticalAlignment="Center"/></Grid></Border>
