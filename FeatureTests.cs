@@ -33,6 +33,18 @@ static class FeatureTests {
    var duplicates=Json.Read("{\"data\":[{\"date\":\"2026-09-17\",\"totals\":{\"credits\":1}},{\"date\":\"2026-09-17\",\"totals\":{\"credits\":1}}]}");
    Check(WeeklyQuota.Parse(weekUsage(83),duplicates,moment).Days.Count==0,"duplicate dates rejected without partial totals");
    Check(!WeeklyQuota.Parse(weekUsage(83),daily,moment.AddDays(8)).TotalCredits.HasValue,"expired cycle rejected");
+   var currentMoment=new DateTime(2026,10,8,8,43,38,DateTimeKind.Utc);
+   var currentUsage=Json.Read("{\"plan_type\":\"plus\",\"rate_limit\":{\"secondary_window\":{\"used_percent\":6,\"limit_window_seconds\":604800,\"reset_at\":1792023257}}}");
+   var staleDaily=Json.Read("{\"data\":[{\"date\":\"2026-09-30\",\"totals\":{\"credits\":50}},{\"date\":\"2026-09-29\",\"totals\":{\"credits\":25}}]}");
+   var pendingWeek=WeeklyQuota.Parse(currentUsage,staleDaily,currentMoment);
+   Check(pendingWeek.CreditsPending&&pendingWeek.UsedPercent==6&&pendingWeek.Days.Count==2,"stale analytics preserves percentage and history");
+   Check(!pendingWeek.UsedCredits.HasValue&&!pendingWeek.TotalCredits.HasValue&&!pendingWeek.Dollars.HasValue&&pendingWeek.Note.Contains("2026-09-30"),"stale analytics identifies newest available day without fabricating estimates");
+   var emptyWeek=WeeklyQuota.Parse(currentUsage,Json.Read("{\"data\":[]}"),currentMoment);
+   Check(emptyWeek.CreditsPending&&!emptyWeek.UsedCredits.HasValue&&emptyWeek.Note.Contains("尚未返回"),"empty analytics remains unknown, not zero");
+   Check(!week.CreditsPending&&!WeeklyQuota.Parse(currentUsage,Json.Read("{}"),currentMoment).CreditsPending,"pending state requires a valid analytics response");
+   var syncedWeek=WeeklyQuota.Parse(currentUsage,Json.Read("{\"data\":[{\"date\":\"2026-10-08\",\"totals\":{\"credits\":60}}]}"),currentMoment);
+   Check(!syncedWeek.CreditsPending&&syncedWeek.TotalCredits==1000m,"current-cycle estimates resume when daily data arrives");
+   output.AppendLine("PASS stale and empty account analytics retain live quota, identify latest day, and resume estimates on sync");
     output.AppendLine("PASS weekly estimate matches screenshot; 30-day boundary, missing data, duplicate and reset guards");
     string quotaLog="{\"timestamp\":\"2026-09-17T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"credits\":{\"balance\":\"2500\",\"has_credits\":true,\"unlimited\":false}}}}";
     var historicalCredits=Json.Get(LogReader.Parse(new StringReader(quotaLog),"credit-test").Quota,"credits");
@@ -96,6 +108,17 @@ static class FeatureTests {
     var weeklyCard=App.BuildWeeklyQuota(week);weeklyCard.Measure(new Size(width,double.PositiveInfinity));weeklyCard.Arrange(new Rect(0,0,width,weeklyCard.DesiredSize.Height));weeklyCard.UpdateLayout();
     Check(weeklyCard.ActualWidth==width,"weekly card width");
    }
+   foreach(double width in new[]{390.0,660.0}) {
+    var pendingCard=App.BuildWeeklyQuota(pendingWeek);pendingCard.Measure(new Size(width,double.PositiveInfinity));pendingCard.Arrange(new Rect(0,0,width,pendingCard.DesiredSize.Height));pendingCard.UpdateLayout();
+    var pendingBody=(StackPanel)pendingCard.Child;var pendingCards=(System.Windows.Controls.Primitives.UniformGrid)pendingBody.Children[1];
+    var pendingValues=pendingCards.Children.OfType<Border>().Select(b=>((TextBlock)((Viewbox)((StackPanel)b.Child).Children[1]).Child).Text).ToArray();
+    Check(pendingValues.SequenceEqual(new[]{"6%","未同步","待明细","待明细"}),"pending cards explain unavailable credits and estimates");
+    Check(((TextBlock)pendingBody.Children[2]).Text.Contains("2026-09-30"),"pending card shows latest analytics date");
+    var pendingBitmap=new System.Windows.Media.Imaging.RenderTargetBitmap((int)width,(int)Math.Ceiling(pendingCard.ActualHeight),96,96,PixelFormats.Pbgra32);pendingBitmap.Render(pendingCard);
+    var pendingEncoder=new System.Windows.Media.Imaging.PngBitmapEncoder();pendingEncoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(pendingBitmap));
+    using(var pendingImage=File.Create(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"weekly-pending-"+width+".png")))pendingEncoder.Save(pendingImage);
+   }
+   output.AppendLine("PASS pending weekly quota UI at narrow and wide widths");
     // Exercise the actual local filter and chart at the 30-day boundary without network access.
     var instance=new App();var flags=BindingFlags.Instance|BindingFlags.NonPublic;
     typeof(App).GetField("window",flags).SetValue(instance,window);

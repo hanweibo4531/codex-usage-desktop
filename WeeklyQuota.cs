@@ -10,6 +10,7 @@ class CreditDay {public DateTime Date;public decimal Credits;public decimal? Tok
 class WeeklyQuota {
  public List<CreditDay> Days=new List<CreditDay>();
  public decimal? UsedPercent,UsedCredits,TotalCredits;
+ public bool CreditsPending;
  public decimal? Dollars { get { return TotalCredits/25m; } }
  public DateTime Start,End,Time;
  public string Note="等待账户用量连接";
@@ -50,7 +51,13 @@ class WeeklyQuota {
    }
   }
   result.Days=parsedDays;
-  if(!found) {result.Note="本周期暂无 Credits 明细，请稍后刷新";return result;}
+  if(!found) {
+   result.CreditsPending=true;
+   DateTime latest=default(DateTime);foreach(var day in parsedDays)if(day.Date>latest)latest=day.Date;
+   result.Note=(latest==default(DateTime)?"账户接口尚未返回 Credits 明细":"账户 Credits 明细仅更新至 "+latest.ToString("yyyy-MM-dd",CultureInfo.InvariantCulture)+"（UTC）")+
+    "\n本周期 Credits 未同步，已用比例可正常读取；总额与周价值需等待账户明细，无法仅凭百分比推算。";
+   return result;
+  }
   result.UsedCredits=total;
   if(percent==0||total==0) {result.Note="用量不足或统计尚未同步，暂不能推算总额";return result;}
   try {result.TotalCredits=total/(percent/100m);}catch(OverflowException){result.Note="推算结果超出范围";return result;}

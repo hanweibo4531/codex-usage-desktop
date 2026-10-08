@@ -20,8 +20,8 @@ using Forms = System.Windows.Forms;
 
 [assembly: AssemblyTitle("Codex Usage Desktop")]
 [assembly: AssemblyDescription("Codex quota and token usage monitor")]
-[assembly: AssemblyVersion("1.7.0.0")]
-[assembly: AssemblyFileVersion("1.7.0.0")]
+[assembly: AssemblyVersion("1.7.1.0")]
+[assembly: AssemblyFileVersion("1.7.1.0")]
 
 namespace CodexUsage {
 static class Json {
@@ -330,7 +330,8 @@ partial class App {
   var body=new StackPanel();var title=Text("配额深度分析",14,"#EDF5FF");title.FontWeight=FontWeights.SemiBold;body.Children.Add(title);
   var cards=new System.Windows.Controls.Primitives.UniformGrid{Columns=4,Margin=new Thickness(-3,12,-3,10)};
   string[] labels={"已用比例","本周已用","推算总额","周价值（估算）"};
-  string[] values={data.UsedPercent.HasValue?data.UsedPercent.Value.ToString("0.#",CultureInfo.InvariantCulture)+"%":"—",data.UsedCredits.HasValue?data.UsedCredits.Value.ToString("0.0",CultureInfo.InvariantCulture):"—",data.TotalCredits.HasValue?data.TotalCredits.Value.ToString("0.0",CultureInfo.InvariantCulture):"—",data.Dollars.HasValue?"$ "+data.Dollars.Value.ToString("0.00",CultureInfo.InvariantCulture):"—"};
+  string pending=data.CreditsPending?"待明细":"—";
+  string[] values={data.UsedPercent.HasValue?data.UsedPercent.Value.ToString("0.#",CultureInfo.InvariantCulture)+"%":"—",data.UsedCredits.HasValue?data.UsedCredits.Value.ToString("0.0",CultureInfo.InvariantCulture):data.CreditsPending?"未同步":"—",data.TotalCredits.HasValue?data.TotalCredits.Value.ToString("0.0",CultureInfo.InvariantCulture):pending,data.Dollars.HasValue?"$ "+data.Dollars.Value.ToString("0.00",CultureInfo.InvariantCulture):pending};
   for(int i=0;i<4;i++) {
    var content=new StackPanel();content.Children.Add(Text(labels[i],10,"#849DBD"));
    var value=Text(values[i],18,"#35C9A0");value.FontWeight=FontWeights.SemiBold;

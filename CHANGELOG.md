@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1
+
+- Show explicit pending states for current-cycle Credits and estimates when account analytics has no matching daily records.
+- Include the latest available UTC analytics date while preserving live percentages and historical records; missing Credits are never treated as zero.
+
 ## 1.7.0
 
 - Redesigned the quota page with four summary tiles and separate window cards featuring reset badges, remaining quota bars, and previous/current/forecast columns.
